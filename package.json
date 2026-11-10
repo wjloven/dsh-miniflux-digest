@@ -1,6 +1,6 @@
 {
   "name": "rss-miniflux-deepread",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "private": true,
   "description": "Elegant Miniflux RSS digest for your DeepSeek Harness",
   "license": "MIT",
