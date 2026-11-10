@@ -1,4 +1,4 @@
-# 加载性能与缓存（v1.5.0）
+# 加载性能与缓存（v1.5.0 → v1.6.0）
 
 对照对象：[electh/nextflux](https://github.com/electh/nextflux) 的 `src/db/*`、`src/stores/authStore.js`、`docs/synchronization.md`。
 
