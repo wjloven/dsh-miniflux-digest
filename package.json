@@ -1,0 +1,47 @@
+{
+  "name": "rss-miniflux-deepread",
+  "version": "1.5.1",
+  "private": true,
+  "description": "Elegant Miniflux RSS digest for your DeepSeek Harness",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wjloven/dsh-miniflux-digest.git"
+  },
+  "homepage": "https://github.com/wjloven/dsh-miniflux-digest#readme",
+  "bugs": {
+    "url": "https://github.com/wjloven/dsh-miniflux-digest/issues"
+  },
+  "engines": {
+    "dsh": ">=0.2.0"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib/*.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "scripts/*.mjs"
+  ],
+  "scripts": {
+    "test": "node tests/digest.test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "type": "module"
+}

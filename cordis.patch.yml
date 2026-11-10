@@ -1,0 +1,5 @@
+# Miniflux 速读 · 宿主插件行
+- insert:
+    - id: rss-miniflux
+      name: 'rss-miniflux-deepread'
+      config: {}

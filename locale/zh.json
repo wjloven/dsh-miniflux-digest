@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Miniflux digest",
+    "description": "把 Miniflux 未读变成三栏阅读面板：分类 tab 与订阅源、带 Starred/Unread/All 的文章列表、全文阅读区。简报只在对话工具里，面板没有 Briefing 页面。"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Miniflux digest",
+    "description": "Reads Miniflux in a three-pane panel: category tabs and a feed list, an article list with Starred/Unread/All filters, and a full-text reader with read/star controls. The briefing lives in the agent tools, not the panel."
+  }
+}

@@ -1,0 +1,13 @@
+/* The preview only supplies the page frame; every panel colour comes from
+   tokens.css, which mirrors the Harness theme. */
+html, body, #root { height: 100%; }
+html { background: var(--dsw-alias-bg-base); }
+body {
+  margin: 0;
+  font-family: var(--dsh-font-family-text-default);
+  color: var(--dsw-alias-label-primary);
+  -webkit-font-smoothing: antialiased;
+}
+* { box-sizing: border-box; }
+button { font-family: inherit; }
+:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
