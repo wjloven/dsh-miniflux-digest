@@ -3061,6 +3061,7 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         }
       }, [entries.length])
 
+
       // Background sync on the interval chosen in Preferences. Silent: the
       // list is already on screen and should not blink into its loading state.
       useEffect(() => {
@@ -3240,6 +3241,43 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         if (scope.kind === 'category') list = list.filter((entry) => entry.categoryId === scope.id)
         return list
       }, [entries, scope])
+
+      /**
+       * Keep the selected row inside the list viewport.
+       *
+       * `j` / `k`, opening an article from a restored session, and any other
+       * change of selection used to move the reader while the list stayed where
+       * it was, so the highlighted row walked off the bottom of the screen.
+       *
+       * `block: 'nearest'` moves the list only when the row is out of sight, and
+       * by the smallest amount — a row that is already visible never jumps, and
+       * a manual scroll is not yanked back by an unrelated re-render because the
+       * marker below only lets one scroll happen per (scope, article) pair.
+       */
+      const listFollowRef = useRef('')
+      useEffect(() => {
+        if (!selectedId) return
+        const list = listRef.current
+        if (!list) return
+        const marker = `${entriesKey}|${selectedId}`
+        if (listFollowRef.current === marker) return
+        const row = list.querySelector('.mrss-item[data-active="true"]')
+        if (!row) return
+        // A remount restores the exact scroll offset a moment later; do not race it.
+        if (PANEL_CACHE.listScroll > 0 && list.scrollTop === 0) return
+        listFollowRef.current = marker
+        // Only the list scrolls. `scrollIntoView` would also walk outer
+        // scrollable ancestors, which inside the Harness shell can move the
+        // whole panel for a row that is already where it should be.
+        const box = list.getBoundingClientRect()
+        const rect = row.getBoundingClientRect()
+        const air = 8
+        let delta = 0
+        if (rect.top < box.top + air) delta = rect.top - box.top - air
+        else if (rect.bottom > box.bottom - air) delta = rect.bottom - box.bottom + air
+        if (Math.abs(delta) < 1) return
+        list.scrollBy({ top: delta, behavior: scrollBehavior() })
+      }, [selectedId, entriesKey, visibleEntries])
 
       // j/k and the next/previous buttons walk the list; asking for the rows
       // around the open one while the reader is idle makes that walk instant.
