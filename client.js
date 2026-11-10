@@ -553,6 +553,11 @@ window.__ModuleLoader__.load({
       snapshotTimer = null
       snapshotPatch = null
       snapshotBase = null
+      // Nothing in the warm paths may survive an account switch: these caches
+      // are only ever the previous account's rows and bodies.
+      PANEL_CACHE.pages.clear()
+      PANEL_CACHE.articles.clear()
+      prefetch.queue.length = 0
       try {
         localStorage.removeItem(CACHE_KEY)
         localStorage.removeItem(CACHE_ARTICLE_KEY)
@@ -604,6 +609,225 @@ window.__ModuleLoader__.load({
       fullView: false,
       /** True when this page session started from the saved snapshot. */
       hydrated: false,
+      /**
+       * Article bodies this session has already seen, most recent last. Kept
+       * outside the component because the panel unmounts on every switch to the
+       * conversation pane; going back to an article should not open it again.
+       */
+      articles: new Map(),
+      /** Recent list pages by entries key, so going back to a scope is instant. */
+      pages: new Map(),
+    }
+
+    // ---------------------------------------------------------------------
+    // Warm paths
+    //
+    // Since v1.5.0 the first paint is fast, but a click still waited for the
+    // network: Miniflux takes 1.8-5.7 s for a list page and 0.7-1.5 s for one
+    // entry on a large account, and the panel asked again every time. So the
+    // panel (a) remembers what it has already read, (b) asks for the row under
+    // the pointer a moment before the click, and (c) reuses list pages it has
+    // seen. Prefetching is deliberately shy: one hovered thing, two at a time,
+    // never for something already in hand, and never blocking anything.
+    // ---------------------------------------------------------------------
+
+    const ARTICLE_MEMORY_MAX = 16
+    const PAGE_MEMORY_MAX = 8
+    const PAGE_MEMORY_TTL = 5 * 60_000
+    const PREFETCH_CONCURRENCY = 2
+    /** Hover dwell before a prefetch; moving across the list fires nothing. */
+    const PREFETCH_DELAY = 140
+
+    function rememberArticle(payload) {
+      const id = Number(payload?.item?.id)
+      if (!id) return
+      PANEL_CACHE.articles.delete(id)
+      PANEL_CACHE.articles.set(id, { article: payload, at: Date.now() })
+      while (PANEL_CACHE.articles.size > ARTICLE_MEMORY_MAX) {
+        const oldest = PANEL_CACHE.articles.keys().next().value
+        PANEL_CACHE.articles.delete(oldest)
+      }
+    }
+
+    function recallArticle(id) {
+      const hit = PANEL_CACHE.articles.get(Number(id))
+      return hit ? hit.article : null
+    }
+
+    function rememberPage(key, data) {
+      if (!key) return
+      PANEL_CACHE.pages.delete(key)
+      PANEL_CACHE.pages.set(key, {
+        entries: data.entries || [],
+        total: Number(data.total) || 0,
+        at: Date.now(),
+      })
+      while (PANEL_CACHE.pages.size > PAGE_MEMORY_MAX) {
+        const oldest = PANEL_CACHE.pages.keys().next().value
+        PANEL_CACHE.pages.delete(oldest)
+      }
+    }
+
+    function recallPage(key) {
+      const hit = PANEL_CACHE.pages.get(key)
+      if (!hit) return null
+      if (Date.now() - hit.at > PAGE_MEMORY_TTL) {
+        PANEL_CACHE.pages.delete(key)
+        return null
+      }
+      return hit
+    }
+
+    /**
+     * A read/star write only moves one row. Patch the pages already in memory
+     * instead of forgetting them: the page cost seconds to fetch, and the panel
+     * is about to switch scope again.
+     *
+     * Rows are updated, not removed, to match the optimistic list: marking an
+     * article read dims its row instead of making it jump out from under the
+     * pointer. The next background fetch drops it from an unread page.
+     */
+    function patchCachedEntry(id, changes) {
+      const numeric = Number(id)
+      if (!numeric) return
+      for (const [key, page] of PANEL_CACHE.pages) {
+        let touched = false
+        const entries = page.entries.map((entry) => {
+          if (Number(entry.id) !== numeric) return entry
+          touched = true
+          return { ...entry, ...changes }
+        })
+        if (!touched) continue
+        PANEL_CACHE.pages.set(key, { ...page, entries })
+      }
+    }
+
+    /** Patch the open article and every remembered copy of it. */
+    function patchCachedArticle(id, changes) {
+      const numeric = Number(id)
+      const apply = (payload) => (payload && Number(payload.item?.id) === numeric
+        ? { ...payload, item: { ...payload.item, ...changes } }
+        : payload)
+      for (const [key, hit] of PANEL_CACHE.articles) {
+        const next = apply(hit.article)
+        if (next !== hit.article) PANEL_CACHE.articles.set(key, { ...hit, article: next })
+      }
+    }
+
+    // A tiny queue: two requests in flight, newest hover wins. Idle warming (the
+    // rows next to the open article) is a separate lane that only runs when
+    // nothing else wants the connection, so it can never delay a hover.
+    const prefetch = {
+      queue: [],
+      idleQueue: [],
+      inflight: new Set(),
+      hoverTimer: null,
+      hoverKind: '',
+    }
+
+    /**
+     * One request per article id, shared by the click and the prefetch that
+     * started a moment earlier. Without this a hover followed by a click sends
+     * two identical requests and the second one lands second.
+     */
+    const inflightArticles = new Map()
+
+    function fetchArticle(id, { fetchOriginal = false } = {}) {
+      const numeric = Number(id)
+      const key = fetchOriginal ? `${numeric}:orig` : String(numeric)
+      const existing = inflightArticles.get(key)
+      if (existing) return existing
+      const params = new URLSearchParams({ id: String(numeric) })
+      if (fetchOriginal) params.set('fetch', '1')
+      const task = callApi(`/entry?${params.toString()}`)
+        .then((result) => {
+          if (!result.ok) return { error: result.error }
+          rememberArticle(result.data)
+          return { article: result.data }
+        })
+        .finally(() => { inflightArticles.delete(key) })
+      inflightArticles.set(key, task)
+      return task
+    }
+
+    function prefetchKey(kind, value) {
+      return `${kind}:${value}`
+    }
+
+    function pumpPrefetch() {
+      // Idle warming gets the connection only when nothing else is waiting for it.
+      if (prefetch.queue.length === 0 && prefetch.inflight.size === 0 && prefetch.idleQueue.length > 0) {
+        prefetch.queue.push(prefetch.idleQueue.shift())
+      }
+      while (prefetch.inflight.size < PREFETCH_CONCURRENCY && prefetch.queue.length > 0) {
+        const task = prefetch.queue.shift()
+        const key = prefetchKey(task.kind, task.value)
+        if (prefetch.inflight.has(key)) continue
+        if (task.kind === 'article') {
+          if (recallArticle(task.value)) continue
+        } else if (recallPage(task.value.key)) {
+          continue
+        }
+        prefetch.inflight.add(key)
+        const request = task.kind === 'article'
+          ? fetchArticle(task.value).then(() => {})
+          : callApi(task.path).then((result) => {
+            if (result.ok && result.data) rememberPage(task.value.key, result.data)
+          })
+        request
+          .catch(() => {})
+          .finally(() => {
+            prefetch.inflight.delete(key)
+            pumpPrefetch()
+          })
+      }
+    }
+
+    function prefetchArticle(id, { priority = false, idle = false } = {}) {
+      const numeric = Number(id)
+      if (!numeric || recallArticle(numeric)) return
+      const key = prefetchKey('article', numeric)
+      if (prefetch.inflight.has(key)) return
+      if (prefetch.queue.some((task) => task.kind === 'article' && task.value === numeric)) return
+      if (prefetch.idleQueue.some((task) => task.kind === 'article' && task.value === numeric)) return
+      const task = { kind: 'article', value: numeric, path: `/entry?id=${numeric}` }
+      if (!idle) prefetch.idleQueue.length = 0
+      if (idle) {
+        prefetch.idleQueue.push(task)
+      } else if (priority) {
+        // A hovered row is about to be clicked; nothing queued should come first.
+        prefetch.queue.unshift(task)
+      } else {
+        prefetch.queue.push(task)
+      }
+      pumpPrefetch()
+    }
+
+    function prefetchPage({ filter, scope, order, search = '', limit = 60 }) {
+      const key = entriesKeyFor({ filter, scope, debounced: search, order })
+      if (PANEL_CACHE.entriesKey === key || recallPage(key)) return
+      const params = new URLSearchParams({ filter, limit: String(limit), offset: '0' })
+      if (order === 'created') params.set('order', 'created')
+      if (search) params.set('search', search)
+      if (scope.kind === 'category') params.set('category', String(scope.id))
+      if (scope.kind === 'feed') params.set('feed', String(scope.id))
+      const path = `/entries?${params.toString()}`
+      if (prefetch.queue.some((task) => task.kind === 'page' && task.value.key === key)) return
+      prefetch.queue.push({ kind: 'page', value: { key }, path })
+      pumpPrefetch()
+    }
+
+    /**
+     * Hover/focus dwell. Only the thing the pointer actually rests on is asked
+     * for, so dragging across the list does not start twenty requests.
+     */
+    function prefetchAfterDwell(kind, run) {
+      if (prefetch.hoverTimer) clearTimeout(prefetch.hoverTimer)
+      prefetch.hoverKind = kind
+      prefetch.hoverTimer = setTimeout(() => {
+        prefetch.hoverTimer = null
+        if (prefetch.hoverKind === kind) run()
+      }, PREFETCH_DELAY)
     }
 
     /**
@@ -642,6 +866,13 @@ window.__ModuleLoader__.load({
         PANEL_CACHE.entries = snapshot.entries
         PANEL_CACHE.entriesKey = key
         PANEL_CACHE.listInfo = { loading: false, total: Number(snapshot.total) || snapshot.entries.length }
+        // Seed the in-session page cache too, so the very first scope switch
+        // after a reload hits memory instead of the network.
+        PANEL_CACHE.pages.set(key, {
+          entries: snapshot.entries,
+          total: PANEL_CACHE.listInfo.total,
+          at: Number(snapshot.savedAt) || Date.now(),
+        })
       }
       if (snapshot.selectedId) {
         PANEL_CACHE.selectedId = Number(snapshot.selectedId) || null
@@ -649,6 +880,7 @@ window.__ModuleLoader__.load({
         if (article && article.id === PANEL_CACHE.selectedId) {
           PANEL_CACHE.article = article.article
           PANEL_CACHE.articleState = 'ready'
+          rememberArticle(article.article)
         }
       }
       return true
@@ -1573,8 +1805,10 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
 .mrss-col{display:flex;flex-direction:column;min-height:0;min-width:0}
 .mrss-list{width:336px;flex:none;border-right:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1)}
 .mrss-list[data-hidden="true"]{display:none}
-.mrss-list-head{padding:7px 9px 8px;border-bottom:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;gap:7px}
+.mrss-list-head{position:relative;padding:7px 9px 8px;border-bottom:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;gap:7px}
 .mrss-list-head .mrss-input{height:28px}
+.mrss-list-head[data-loading="true"]::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;pointer-events:none;background:linear-gradient(90deg,transparent,var(--dsw-alias-brand-primary),transparent) no-repeat;background-size:38% 100%;animation:mrss-list-loading 1.1s ease-in-out infinite}
+@keyframes mrss-list-loading{0%{background-position:-40% 0}100%{background-position:140% 0}}
 .mrss-list-bar{display:flex;align-items:center;gap:3px;min-height:32px}
 .mrss-list-bar .mrss-btn[data-icon="true"]{width:28px;height:28px;padding:4px}
 .mrss-list-title{display:flex;align-items:center;gap:7px;flex:1;min-width:0;padding:0 2px}
@@ -2584,13 +2818,27 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
        * otherwise the list is replaced. `silent` revalidates an already painted
        * list: no loading state, no scroll reset, no error banner, and no state
        * update at all when nothing changed.
+       *
+       * A page this session has already shown paints from memory first and only
+       * then refreshes, which is what makes going back to a category feel like a
+       * switch instead of a fetch.
        */
       const loadEntries = useCallback(async ({ append = false, silent = false } = {}) => {
         if (append && loadingMoreRef.current) return
+        const key = entriesKeyFor({ filter, scope, debounced, order: prefs.sortField })
+        const remembered = append || silent ? null : recallPage(key)
+        if (remembered) {
+          PANEL_CACHE.entriesKey = key
+          PANEL_CACHE.listScroll = 0
+          if (listRef.current) listRef.current.scrollTop = 0
+          setEntries(remembered.entries)
+          setError(null)
+          setListInfo((current) => ({ ...current, loading: false, loadingMore: false, total: remembered.total }))
+        }
         const previous = append ? entriesRef.current : []
         const seq = append ? listSeq.current : ++listSeq.current
         if (append) loadingMoreRef.current = true
-        if (!silent) setListInfo((current) => ({ ...current, loading: !append, loadingMore: append }))
+        if (!silent && !remembered) setListInfo((current) => ({ ...current, loading: !append, loadingMore: append }))
         const params = new URLSearchParams({
           filter,
           limit: '60',
@@ -2604,7 +2852,7 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         if (append) loadingMoreRef.current = false
         if (seq !== listSeq.current) return
         if (!result.ok) {
-          if (silent) return
+          if (silent || remembered) return
           setListInfo((current) => ({ ...current, loading: false, loadingMore: false }))
           setError(result.error)
           return
@@ -2614,16 +2862,20 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         if (append) {
           setEntries((current) => {
             const seen = new Set(current.map((entry) => entry.id))
-            return current.concat(incoming.filter((entry) => !seen.has(entry.id)))
+            const merged = current.concat(incoming.filter((entry) => !seen.has(entry.id)))
+            rememberPage(key, { entries: merged, total })
+            return merged
           })
         } else {
-          const key = entriesKeyFor({ filter, scope, debounced, order: prefs.sortField })
           PANEL_CACHE.entriesKey = key
-          if (!silent) {
+          if (!silent && !remembered) {
             PANEL_CACHE.listScroll = 0
             if (listRef.current) listRef.current.scrollTop = 0
           }
-          if (!silent || !sameList(entriesRef.current, incoming)) setEntries(incoming)
+          rememberPage(key, { entries: incoming, total })
+          // A remembered page is already on screen; only replace it when the
+          // refresh actually differs, so the reader keeps its scroll position.
+          if ((!silent && !remembered) || !sameList(entriesRef.current, incoming)) setEntries(incoming)
           if (!silent) setError(null)
           // Only the first page is worth persisting: a long scrolled list would
           // blow the storage budget for nothing.
@@ -2635,26 +2887,42 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
       const loadArticle = useCallback(async (id, fetchOriginal = false) => {
         if (!id) return null
         const seq = ++articleSeq.current
+        const remembered = fetchOriginal ? null : recallArticle(id)
+        if (remembered) {
+          // Paint what this session already read, then refresh it in place: the
+          // click lands now, not in 700 ms, and the header still catches up.
+          PANEL_CACHE.articleScroll = 0
+          PANEL_CACHE.articleState = 'ready'
+          setArticle(remembered)
+          setArticleState('ready')
+          setProgress(0)
+          void fetchArticle(id).then((outcome) => {
+            if (seq !== articleSeq.current) return
+            if (!outcome?.article) return
+            if (JSON.stringify(outcome.article) === JSON.stringify(remembered)) return
+            setArticle(outcome.article)
+            persistArticle(outcome.article)
+          })
+          return null
+        }
         // Readability refetches in place: keep the article on screen (and any
         // full-view layout) instead of swapping to the "Opening…" state.
         if (!fetchOriginal) setArticleState('loading')
-        const params = new URLSearchParams({ id: String(id) })
-        if (fetchOriginal) params.set('fetch', '1')
-        const result = await callApi(`/entry?${params.toString()}`)
+        const outcome = await fetchArticle(id, { fetchOriginal })
         if (seq !== articleSeq.current) return null
-        if (result.ok) {
+        if (outcome?.article) {
           PANEL_CACHE.articleScroll = 0
           if (articleRef.current) articleRef.current.scrollTop = 0
-          setArticle(result.data)
+          setArticle(outcome.article)
           setArticleState('ready')
           setProgress(0)
-          persistArticle(result.data)
+          persistArticle(outcome.article)
           return null
         }
         // A failed refetch keeps the current article; the caller shows a toast.
-        if (fetchOriginal) return result.error
+        if (fetchOriginal) return outcome?.error || { code: 'unknown', message: 'Article request failed' }
         setArticleState('error')
-        setError(result.error)
+        setError(outcome?.error || { code: 'unknown', message: 'Article request failed' })
         return null
       }, [])
 
@@ -2711,6 +2979,35 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         if (cached && cached.item?.id === selectedId && PANEL_CACHE.articleState === 'ready') return
         void loadArticle(selectedId)
       }, [selectedId, loadArticle])
+
+      // X media is enrichment: the body is already on screen, so ask for the
+      // tweet afterwards and drop it into the card that is waiting for it. The
+      // Host caches the answer for five minutes, so a revisit is instant.
+      useEffect(() => {
+        if (articleState !== 'ready' || !article?.item?.id) return undefined
+        const embeds = Array.isArray(article.embeds) ? article.embeds : []
+        const ids = embeds
+          .filter((embed) => embed.provider === 'x' && embed.id && !embed.tweet)
+          .map((embed) => String(embed.id))
+        if (ids.length === 0) return undefined
+        let cancelled = false
+        callApi(`/tweets?ids=${ids.map((id) => encodeURIComponent(id)).join(',')}`).then((result) => {
+          if (cancelled || !result.ok) return
+          const tweets = result.data?.tweets || {}
+          const merged = {
+            ...article,
+            embeds: embeds.map((embed) => (
+              embed.provider === 'x' && !embed.tweet && tweets[embed.id]
+                ? { ...embed, tweet: tweets[embed.id] }
+                : embed
+            )),
+          }
+          if (merged.embeds.every((embed, index) => embed === embeds[index])) return
+          rememberArticle(merged)
+          setArticle((current) => (current && current.item?.id === merged.item.id ? merged : current))
+        })
+        return () => { cancelled = true }
+      }, [article, articleState])
 
       // Section ticks for the reading rail; measured from the rendered DOM so
       // it follows whatever headings the sanitizer kept.
@@ -2835,12 +3132,15 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         notify(nextRead ? t('status.markedRead') : t('status.markedUnread'))
         // Keep the row in place so j/k does not jump: it dims instead of
         // disappearing, and the unread counter catches up on the next sync.
+        const nextStatus = nextRead ? 'read' : 'unread'
         setEntries((current) => current.map((entry) => (
-          entry.id === item.id ? { ...entry, status: nextRead ? 'read' : 'unread' } : entry
+          entry.id === item.id ? { ...entry, status: nextStatus } : entry
         )))
         setArticle((current) => (current && current.item.id === item.id
-          ? { ...current, item: { ...current.item, status: nextRead ? 'read' : 'unread' } }
+          ? { ...current, item: { ...current.item, status: nextStatus } }
           : current))
+        patchCachedEntry(item.id, { status: nextStatus })
+        patchCachedArticle(item.id, { status: nextStatus })
         void loadBootstrap({ silent: true })
       }, [act, filter, loadBootstrap, notify, t])
 
@@ -2854,6 +3154,8 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         setArticle((current) => (current && current.item.id === item.id
           ? { ...current, item: { ...current.item, starred: next } }
           : current))
+        patchCachedEntry(item.id, { starred: next })
+        patchCachedArticle(item.id, { starred: next })
         setStarredEpoch((value) => value + 1)
       }, [act, notify, t])
 
@@ -2876,6 +3178,8 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         setArticle((current) => (current && current.item.id === item.id
           ? { ...current, item: { ...current.item, status: 'read' } }
           : current))
+        patchCachedEntry(item.id, { status: 'read' })
+        patchCachedArticle(item.id, { status: 'read' })
       }, [act, adjustFeedUnread])
 
       const openItem = useCallback((item) => {
@@ -2933,6 +3237,21 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         if (scope.kind === 'category') list = list.filter((entry) => entry.categoryId === scope.id)
         return list
       }, [entries, scope])
+
+      // j/k and the next/previous buttons walk the list; asking for the rows
+      // around the open one while the reader is idle makes that walk instant.
+      useEffect(() => {
+        if (!selectedId) return undefined
+        const index = visibleEntries.findIndex((entry) => entry.id === selectedId)
+        if (index < 0) return undefined
+        const handle = scheduleIdle(() => {
+          for (const offset of [1, -1, 2]) {
+            const neighbour = visibleEntries[index + offset]
+            if (neighbour) prefetchArticle(neighbour.id, { idle: true })
+          }
+        }, 700)
+        return () => cancelIdle(handle)
+      }, [selectedId, visibleEntries])
 
       const markAllRead = useCallback(async () => {
         // Starred is a saved-items view, not an unread queue: the list header
@@ -3600,6 +3919,16 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
             ? `${feed.title} · ${t('side.feedError')}: ${feed.lastError}`
             : `${feed.title}${feed.categoryTitle ? ` · ${feed.categoryTitle}` : ''}`,
           onClick: () => openScope({ kind: 'feed', id: feed.id, title: feed.title }),
+          onMouseEnter: () => prefetchAfterDwell(`feed:${feed.id}`, () => prefetchPage({
+            filter,
+            scope: { kind: 'feed', id: feed.id },
+            order: prefs.sortField === 'created' ? 'created' : 'published',
+          })),
+          onFocus: () => prefetchAfterDwell(`feed:${feed.id}`, () => prefetchPage({
+            filter,
+            scope: { kind: 'feed', id: feed.id },
+            order: prefs.sortField === 'created' ? 'created' : 'published',
+          })),
         },
         h(FeedIcon, { feedId: feed.id, title: feed.title }),
         h('span', { className: 'mrss-grow mrss-feedlabel' },
@@ -3853,7 +4182,12 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
       // One row, left to right: sidebar toggle, scope name with its unread
       // count, Mark all read (icon only, tooltip on hover), search. Refresh
       // lives in the feeds sidebar (and on `r`).
-      const listHead = h('div', { className: 'mrss-list-head' },
+      const listHead = h('div', {
+        className: 'mrss-list-head',
+        // A refresh under an already painted list; a cold list shows the
+        // skeleton instead, so this bar never stands in for missing content.
+        'data-loading': listInfo.loading && visibleEntries.length > 0 ? 'true' : undefined,
+      },
         h('div', { className: 'mrss-list-bar' },
           h('button', {
             className: 'mrss-btn', 'data-icon': 'true', 'data-variant': 'ghost', type: 'button',
@@ -3932,6 +4266,8 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
                 'data-read': item.status === 'read',
                 'data-dim': prefs.dimRead ? 'true' : 'false',
                 onClick: () => openItem(item),
+                onMouseEnter: () => prefetchAfterDwell(`item:${item.id}`, () => prefetchArticle(item.id, { priority: true })),
+                onFocus: () => prefetchAfterDwell(`item:${item.id}`, () => prefetchArticle(item.id, { priority: true })),
                 onKeyDown: (event) => {
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault()

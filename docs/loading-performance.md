@@ -72,6 +72,68 @@
 
 真实实例上的一屏：上排是真图标，下面是还没取到的字母块（侧栏 200 行里只有视野附近的会去取）。
 
+## 列表与详情（v1.6.0）
+
+首帧修好之后，剩下的慢在**每一次点击**上。2026-11-10 在一个 400 源量级的真实实例上量的数（未读 1000 条以上）：
+
+| 请求 | 耗时 | 说明 |
+| --- | --- | --- |
+| `/entries` 冷 | **1.8–5.7 s** | 和 `limit` 无关：`limit=10` 也要 2.6 s，是 Miniflux 那边的聚合查询慢 |
+| `/entries` 暖（8 s 内存缓存内） | 1–2 ms | 但缓存只有 8 秒，过了就重新等 |
+| `/entry` 冷 | **0.7–15 s**（多为 0.7–1.5 s，偶发 6.6 / 14.9 s） | 完全没缓存，每次点都重新问 |
+| `/entry` 带 X 推文 | 再多 **1.4–3 s** | `enrich` 在返回前 `await` 了 syndication 接口（超时 3 s） |
+| 标一条已读之后的列表 | 又回到冷路径 | 写操作 `expire(['entries'])` 把整张表清掉了 |
+
+也就是说：列表每次切换范围、详情每次点开，都要重新付一次上游的时间。
+
+### 改法
+
+| 改动 | 位置 | 效果 |
+| --- | --- | --- |
+| `/entries` 改 stale-while-revalidate（60 s 新鲜 / 30 min 可陈旧） | `index.js` 的 `listEntriesCached` | 过期不再等于冷启动：先给旧页，后台刷 |
+| `/entry` 加缓存（10 min 新鲜 / 2 h 可陈旧，上限 240 篇） | `loadArticleCached` | 回退、上一篇/下一篇、预取命中都是 1 ms 级 |
+| 写操作按条目打补丁，不清整表 | `patchEntryRows` + `lib/cache.js` 的 `patch` | 标已读只改那一行；`unread` 页里删掉、`All`/`Starred` 页保留并改状态 |
+| X 推文移出关键路径：`GET /tweets?ids=` | `index.js` | 正文先出来，卡片后补；不再为一条推文等 3 s |
+| 文章内存缓存（最近 16 篇）+ 列表多页缓存（最近 8 页，5 min） | `client.js` 的 `rememberArticle` / `rememberPage` | 切回看过的分类、重新打开文章都是同步命中 |
+| 悬停预取（停留 140 ms 才发，优先插队） | `prefetchAfterDwell` / `prefetchArticle` | 鼠标停一下再点，正文已经在了 |
+| 阅读时预热相邻两篇（空闲车道，一次一个） | 邻居预取 effect | `j/k` 连续读不用等 |
+| 侧栏源悬停预取第一页 | `feedRow` | 切源不再先是骨架 |
+| 同一篇的请求合并 | `fetchArticle` 的 `inflightArticles` | 预取和点击共用一次请求，不会发两遍 |
+| 列表刷新时只画一条 2 px 进度线 | `.mrss-list-head[data-loading]` | 有旧内容时不再闪骨架，也不再像卡住 |
+
+预取是**节制的**：悬停停留才发、同一时刻最多 2 个、已缓存的跳过、空闲预热单独一条车道（有优先请求就把排队的丢掉）。所以它不会把 Miniflux 打满，也不会让点击排在预取后面。
+
+### 实测
+
+`tests/warm-paths.mjs`（preview 壳 + mock 每请求延迟 1200 ms，页面内 `performance.now()` 计时）：
+
+| 动作 | 耗时 | 走的是什么 |
+| --- | --- | --- |
+| 第一次打开一篇文章 | 1248 ms | 付一次网络 |
+| 再打开第二篇 | 16 ms | 相邻预取已经落地 |
+| 回到第一篇 | 18 ms | 内存副本 |
+| `j` 到下一篇 | 17 ms | 空闲预取 |
+| 悬停一下再点 | 21 ms | 悬停预取 |
+| 第一次切到一个分类 | 1216 ms | 付一次网络（只此一次） |
+| 切回原分类 | 10 ms | 记住的整页，且没有出现刷新条 |
+
+线上 Host（同一个真实实例）：
+
+```
+/entry 冷 4.27 s → 暖 1.1 ms（server-timing: entry;dur=0）
+/entries 冷 4.63 s → 暖 1.9 ms
+/tweets 不再阻塞 /entry，单独一条请求
+```
+
+### 怎么复跑
+
+```bash
+node tests/warm-paths.mjs          # 交互暖路径：切范围、重开、预取（需要 Chromium）
+node tests/warm-paths.mjs --delay 1600
+```
+
+`--delay` 是 mock 的每请求延迟。断言分两类：**第一次**必须付网络（`>= delay * 0.8`），**第二次**必须 < 400 ms。
+
 ## 实测
 
 环境：本机 Host 连真实 Miniflux（约 400 个订阅 / 200 未读），preview 假数据用于首帧对照。
@@ -112,6 +174,7 @@ node tests/cache.test.mjs        # 缓存语义：SWR、共享后台刷新、按
 node tests/host-cache.mjs        # Host 端到端：冷/暖 bootstrap、已读只失效一部分、entries 去重
 node tests/first-paint.mjs       # 首帧：cold 出骨架、warm 从快照直接画（需要 Chromium）
 node tests/first-paint.mjs --shots /tmp/shots --theme dark   # 顺手存图看明暗两版
+node tests/warm-paths.mjs        # 交互暖路径：切范围、重开、预取（需要 Chromium）
 ```
 
 `--delay` 控制 mock 网络延迟（默认 1200 ms），`--chromium` 指定浏览器路径；没有 Chromium 时该脚本会跳过而不是失败。
@@ -136,3 +199,11 @@ cacheRunSWR -> cacheRun        // bootstrap 的四个调用
 - 存储超限时先丢条目页、保留目录；再不行整体删除，下次冷启动重建。
 - Host 缓存仍在进程内存里，Host 重启后的第一次是冷路径——此时由客户端快照兜住首帧。
 - 星标过滤的 `feed-stats` 仍是最多 1000 条聚合，缓存 60 秒，未改。
+
+v1.6.0 之后：
+
+- 列表缓存是**按查询串**存的，`filter` / 分类 / 源 / 搜索词不同就是不同的一页。滚了很多页之后切走再回来，只记得前 8 个查询的第一页与滚过的部分。
+- 写操作只打补丁，所以别处（另一个客户端、Miniflux 自己的定时刷新）改的已读状态要等下一次真正重取（60 s 后，或切换范围触发）才会出现在列表上。
+- 预取占用真实的上游请求：悬停停留 140 ms 才发，空闲预热一次只跑一个。网络很慢时它只是把等待挪到点击之前，并不会让总请求变少。
+- `/entry` 的缓存按 id 存，读完标记已读只是改头部状态；正文本身在 Miniflux 那边若被 `fetchContent` 更新过，要等 10 min 新鲜期过后才刷新。
+- X 推文是第二次请求：正文先出，媒体卡片晚一点补上；syndication 接口失败时卡片保持无媒体，1 分钟后才重试。

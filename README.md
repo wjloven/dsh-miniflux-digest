@@ -27,6 +27,7 @@ Bring your Miniflux subscriptions directly into DeepSeek Harness. Miniflux Diges
 - **Three-column reading workspace:** Categories and feeds on the left, an article feed in the center, and the full reader on the right. Everything opens in place without spawning external tabs.
 - **Crafted for long-form reading:** Configurable font sizes, line heights, and reading measures. Includes a soothing paper texture mode, a refined dark theme (with softened text brightness for eye comfort), breakout figures, syntax-highlighted code blocks, and footnotes that expand directly at the anchor point.
 - **Instant state restoration:** Remembers your active feed, article, and exact scroll position. Thanks to local state caching, reopening the panel displays content instantly without layout shifts or cold-start blanks.
+- **Instant after the first open:** Articles you have already read and categories you have already visited come straight from memory. Resting the pointer on a row, or simply reading on with `j` / `k`, puts the next article in flight before you click it. The first open still waits once for Miniflux; after that a click is effectively immediate.
 - **Synchronized triage filters:** Switching between Starred, Unread, and All states simultaneously updates both feed badges and the article queue.
 - **Embedded media playback:** Plays video embeds from YouTube, Bilibili, and X (Twitter) natively within the reader.
 - **Keyboard-driven workflow:** Navigate articles and manage state effortlessly using standard reader keys (`j` / `k` to move, `m` to toggle read, `s` to star, `c` to copy clean Markdown, `v` to visit the original web page).
@@ -91,6 +92,7 @@ The plugin provides six tools that share session credentials and unread states w
 - **Local credential isolation:** API tokens are stored securely in your local Harness profile vault—never exposed to disk configs or committed to version control.
 - **Direct communication:** Network calls connect strictly to your configured Miniflux server. Embedded X post videos resolve streams via `cdn.syndication.twimg.com`.
 - **Stateless caching:** Memory caches and UI snapshots exist only to deliver instantaneous page restoration. Disconnecting, logging out, or switching accounts flushes all cached data.
+- **Restrained prefetching:** A prefetch fires only after the pointer rests 140 ms on a row, never more than two at a time, never for something already cached, and idle warming runs in its own lane so it can never delay a click. X media is a second request, after the article body is already on screen.
 
 ## Limitations
 
@@ -112,7 +114,7 @@ For comprehensive implementation notes—including HTML sanitization, code detec
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Credential management, recovery steps, and debugging logs |
 | [docs/verification.md](docs/verification.md) | Test coverage and verification status |
 | [docs/development.md](docs/development.md) | Local preview workflow, screenshot generation, and project layout |
-| [docs/loading-performance.md](docs/loading-performance.md) | First-frame snapshot caching and rendering optimization |
+| [docs/loading-performance.md](docs/loading-performance.md) | First-frame snapshot caching, warm-path caches and prefetching |
 | [docs/ringo-reading-design.md](docs/ringo-reading-design.md) | Typography and reading surface design choices |
 
 ## License
@@ -136,6 +138,7 @@ All feed names, article headlines, and sample articles in `preview/data.mjs` and
 - **经典三栏布局**：左侧分类与订阅源树、中间文章信息流、右侧正文阅读区，所有操作原地完成，告别外跳标签页的碎片体验。
 - **专注长文阅读质感**：自由调节字号、行高与行宽；预置明亮、暗色以及温润的舒缓纸面（Paper）三种配色（暗色模式下正文亮度轻微柔化，减轻眼部疲劳）；支持宽幅图片自适应展示、原地直接展开的交互脚注，以及带语言标签的代码语法高亮。
 - **阅读状态秒级恢复**：自动记忆上次聚焦的分类、阅读文章与精确滚动位置。基于轻量本地快照机制，再次打开面板立即可见内容，无白屏加载与布局跳动。
+- **第二次打开起基本不用等**：读过的文章、逛过的分类直接来自内存；鼠标在列表行上停一下、或用 `j` / `k` 读下去时，下一篇已经在路上。第一次打开仍需等一次 Miniflux。
 - **分类与列表实时联动**：星标、未读、全部等筛选维度在左侧源列表与中间文章列表间保持双向同步。
 - **多媒体原生内嵌**：文章中引用的 YouTube、Bilibili 及 X（Twitter）视频直接在阅读区原地嵌入播放，无需跳转第三方网站。
 - **全键盘快捷键流**：遵循经典阅读器习惯，支持 `j` / `k` 上下移动、`m` 标记已读、`s` 收藏星标、`c` 一键复制整洁 Markdown、`v` 访问原文。
@@ -200,6 +203,7 @@ dsh plugin --profile desktop add /path/to/dsh-miniflux-digest
 - **凭据本地隔离**：API 令牌仅加密保存在本机 Harness 凭据管理器中，绝不会写入仓库代码或明文配置中。
 - **纯净直接通信**：所有网络请求仅直连你指定的 Miniflux 实例（内嵌 X 视频流仅通过官方 `cdn.syndication.twimg.com` 解析）。
 - **即用即清缓存**：内存缓存与快照仅用于提升再次打开的响应速度；登出、断开连接或切换账号时会自动清空全部缓存。
+- **预取有节制**：悬停停留 140 ms 才发请求，同一时刻最多两个，已缓存的跳过；空闲预热走单独一条车道，不会让点击排在预取后面。X 推文是正文出来之后的第二次请求。
 
 ## 使用限制
 

@@ -21,7 +21,7 @@ import {
 import { tweetFromSyndication } from './lib/tweet.js'
 import { createCache } from './lib/cache.js'
 
-const VERSION = '1.5.2'
+const VERSION = '1.6.0'
 const PREFIX = '/rss-miniflux/api'
 const CREDENTIAL_KEY = 'rss-miniflux'
 const META_TTL = 60_000
@@ -30,9 +30,20 @@ const DIGEST_TTL = 45_000
 // A cached catalog older than META_TTL but younger than this is served while it
 // refreshes in the background; past it the request waits for Miniflux.
 const META_STALE_TTL = 15 * 60_000
-// One page of entries is served from memory for a few seconds so a remount or a
-// second panel does not hit Miniflux twice for the same query.
-const ENTRIES_TTL = 8_000
+// One page of entries is served from memory while it is fresh, and while it is
+// merely plausible it is served *and* refreshed in the background. Miniflux
+// takes 1.8-5.7 s for a page on a large account, so an expired page that blocks
+// is what "the list is slow" actually means.
+const ENTRIES_TTL = 60_000
+const ENTRIES_STALE_TTL = 30 * 60_000
+// An article body does not change once published, and opening the same one
+// again (back/forward, next/previous, the prefetch the panel does on hover) is
+// the common case. Keep them for longer and let a write patch them.
+const ARTICLE_TTL = 10 * 60_000
+const ARTICLE_STALE_TTL = 2 * 60 * 60_000
+// Bound on cached article payloads; a 40 KB body times a few hundred is still
+// small, this is only here so a session that reads all day cannot grow forever.
+const ARTICLE_CACHE_MAX = 240
 
 export const inject = ['webServer', 'tools']
 
@@ -411,12 +422,15 @@ export function apply(ctx, config = {}) {
    * origin) and cache it in memory for five minutes.
    */
   const TWEET_TTL = 5 * 60_000
+  // A miss is usually a timeout, not "this tweet has no media". Retrying one
+  // minute later is cheap now that this is off the article's critical path.
+  const TWEET_MISS_TTL = 60_000
   const tweetCache = new Map()
 
   async function loadTweet(id) {
     const key = String(id)
     const hit = tweetCache.get(key)
-    if (hit && Date.now() - hit.at < TWEET_TTL) return hit.value
+    if (hit && Date.now() - hit.at < (hit.value ? TWEET_TTL : TWEET_MISS_TTL)) return hit.value
     let value = null
     try {
       const response = await fetch(
@@ -466,6 +480,68 @@ export function apply(ctx, config = {}) {
     // Only the reader needs tweet media; the agent tool stays offline for X.
     if (enrich) await enrichEmbeds(payload.embeds)
     return payload
+  }
+
+  /**
+   * `/entry` behind a stale-while-revalidate cache.
+   *
+   * Miniflux answers one entry in 0.7-1.5 s, with the occasional 5-15 s outlier,
+   * and the panel asks again for the same id on back/forward, on p/n, and on the
+   * hover prefetch. Parsing is not the cost (a 34 KB body sanitizes in ~3 ms), so
+   * the only real fix is not asking twice.
+   */
+  async function loadArticleCached(id, { demo = false, fetchOriginal = false } = {}) {
+    const useDemo = demo || !(await resolveSettings()).configured
+    if (useDemo) return loadArticle(id, { demo: useDemo, fetchOriginal })
+    const key = `article:${Number(id)}${fetchOriginal ? ':orig' : ''}`
+    const payload = await cacheRunSWR(key, ARTICLE_TTL, ARTICLE_STALE_TTL, () =>
+      loadArticle(id, { fetchOriginal }),
+    )
+    if (cache.size > ARTICLE_CACHE_MAX + 200) cache.expire(['article'])
+    return payload
+  }
+
+  /**
+   * A write only changes one row. Patch the pages that already hold it instead
+   * of dropping every page: on this account a page costs seconds, and marking an
+   * article read used to invalidate all of them (so the next category switch was
+   * a cold fetch again).
+   */
+  function patchEntryRows(ids, changes) {
+    const targets = new Set((Array.isArray(ids) ? ids : [ids]).map((id) => Number(id)).filter(Boolean))
+    if (targets.size === 0) return
+    cache.patch(['entries'], (page, key) => {
+      if (!page || !Array.isArray(page.entries)) return undefined
+      // Only an unread-only page loses a row that is no longer unread. `All`
+      // and `Starred` keep it and just show the new state.
+      const dropWhenRead = changes.status === 'read' && /filter=unread(?:&|$)/.test(key)
+      let touched = false
+      let removed = 0
+      const entries = page.entries
+        .map((entry) => {
+          if (!targets.has(Number(entry.id))) return entry
+          touched = true
+          if (dropWhenRead && String(entry.status) === 'unread') {
+            removed += 1
+            return null
+          }
+          return { ...entry, ...changes }
+        })
+        .filter(Boolean)
+      if (!touched) return undefined
+      return {
+        ...page,
+        entries,
+        total: removed > 0 ? Math.max(0, Number(page.total || 0) - removed) : page.total,
+      }
+    })
+    // The open article carries the same status/starred fields in its header.
+    for (const id of targets) {
+      cache.patch([`article:${id}`], (payload) => {
+        if (!payload || !payload.item) return undefined
+        return { ...payload, item: { ...payload.item, ...changes } }
+      })
+    }
   }
 
   function articlePayload(raw) {
@@ -899,15 +975,17 @@ export function apply(ctx, config = {}) {
   }
 
   /**
-   * `/entries` behind a few seconds of memory cache. Reopening the panel or a
-   * remount asks for the exact same page again; that should not cost a Miniflux
-   * round trip. Any write action expires these keys.
+   * `/entries` behind a stale-while-revalidate cache. Reopening the panel, going
+   * back to a category, or the panel's prefetch all ask for a page that was
+   * already fetched; the answer is the cached one while it is plausible, and a
+   * background refresh updates the next view. Writes patch rows in place
+   * (`patchEntryRows`) instead of dropping every page.
    */
   async function listEntriesCached(params) {
     const demo = wantsDemo(params.get('demo')) || !(await resolveSettings()).configured
     if (demo) return listEntries(params)
     const key = `entries:${params.toString()}`
-    return cacheRun(key, ENTRIES_TTL, () => listEntries(params))
+    return cacheRunSWR(key, ENTRIES_TTL, ENTRIES_STALE_TTL, () => listEntries(params))
   }
 
   function listItem(entry) {
@@ -1165,8 +1243,29 @@ export function apply(ctx, config = {}) {
       if (method === 'GET' && route === '/entry') {
         const id = url.searchParams.get('id')
         if (!id) throw new HttpError(400, 'bad_request', 'Missing id')
+        const start = Date.now()
         const demo = wantsDemo(url.searchParams.get('demo'))
-        return json(await loadArticle(id, { demo, fetchOriginal: url.searchParams.get('fetch') === '1', enrich: true }))
+        const payload = await loadArticleCached(id, {
+          demo,
+          fetchOriginal: url.searchParams.get('fetch') === '1',
+        })
+        return json(payload, 200, { 'server-timing': `entry;dur=${Date.now() - start}` })
+      }
+      if (method === 'GET' && route === '/tweets') {
+        // X media is enrichment, not the article. Asking the syndication
+        // endpoint takes 1.4-3 s, so it runs after the body is on screen
+        // instead of holding `/entry` open for it.
+        const ids = String(url.searchParams.get('ids') || '')
+          .split(',')
+          .map((id) => id.trim())
+          .filter(Boolean)
+          .slice(0, 24)
+        const started = Date.now()
+        const tweets = {}
+        await Promise.all(ids.map(async (id) => {
+          tweets[id] = await loadTweet(id)
+        }))
+        return json({ tweets }, 200, { 'server-timing': `tweets;dur=${Date.now() - started}` })
       }
       if (method === 'GET' && route === '/accounts') {
         return json(await accountsSnapshot())
@@ -1307,24 +1406,35 @@ export function apply(ctx, config = {}) {
     switch (action) {
       case 'mark_read':
         await client.markRead(id, 'read')
-        // Only counters and the visible page go stale; the catalog stands.
-        expire(['counters', 'feed-stats', 'entries'])
+        // One row changed: patch it into every cached page and article, keep the
+        // pages themselves. Counters are cheap to refetch, entries are not.
+        patchEntryRows(id, { status: 'read' })
+        expire(['counters', 'feed-stats'])
         return { ok: true, action }
       case 'mark_unread':
         await client.markRead(id, 'unread')
-        expire(['counters', 'feed-stats', 'entries'])
+        patchEntryRows(id, { status: 'unread' })
+        expire(['counters', 'feed-stats'])
         return { ok: true, action }
       case 'mark_read_many':
+        if (Array.isArray(body.ids) && body.ids.length > 0 && body.ids.length <= 200) {
+          await client.markRead(body.ids, 'read')
+          patchEntryRows(body.ids, { status: 'read' })
+          expire(['counters', 'feed-stats'])
+          return { ok: true, action }
+        }
         await client.markRead(body.ids, 'read')
         expire(['counters', 'feed-stats', 'entries'])
         return { ok: true, action }
       case 'star':
         await starEntry(client, id, true)
-        expire(['feed-stats', 'entries'])
+        patchEntryRows(id, { starred: true })
+        expire(['feed-stats'])
         return { ok: true, action }
       case 'unstar':
         await starEntry(client, id, false)
-        expire(['feed-stats', 'entries'])
+        patchEntryRows(id, { starred: false })
+        expire(['feed-stats'])
         return { ok: true, action }
       case 'refresh':
         await client.refreshAll()

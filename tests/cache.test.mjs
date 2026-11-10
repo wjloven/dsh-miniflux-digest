@@ -114,6 +114,41 @@ async function prefixDoesNotOvermatch() {
   assert.equal(cache.get('feed-stats'), undefined)
 }
 
+async function patchRewritesValueAndKeepsFreshness() {
+  const cache = makeCache()
+  await cache.run('entries:filter=unread', 10_000, async () => ({ total: 2, entries: [{ id: 1, status: 'unread' }, { id: 2, status: 'unread' }] }))
+  await cache.run('entries:filter=all', 10_000, async () => ({ total: 2, entries: [{ id: 1, status: 'unread' }] }))
+
+  const changed = cache.patch(['entries'], (page) => ({
+    ...page,
+    entries: page.entries.filter((entry) => entry.id !== 1),
+  }))
+  assert.equal(changed, 2, 'every matching page is patched')
+  assert.deepEqual(cache.get('entries:filter=unread').entries, [{ id: 2, status: 'unread' }])
+  assert.deepEqual(cache.get('entries:filter=all').entries, [])
+
+  // Patching must not reset the clock: an old page stays old and refreshes.
+  clock += 9_500
+  await cache.runSWR('entries:filter=all', 10_000, 60_000, async () => ({ total: 0, entries: [] }))
+  assert.equal(cache.pendingRefreshes(), 0, 'a patched page keeps its age, so it is still fresh here')
+}
+
+async function patchSkipsExpiredAndUndefined() {
+  const cache = makeCache()
+  await cache.run('article:7', 1_000, async () => ({ id: 7, starred: false }))
+  clock += 5_000
+  const changed = cache.patch(['article:7'], () => ({ id: 7, starred: true }))
+  assert.equal(changed, 0, 'an aged-out value is dropped, not resurrected')
+  assert.equal(cache.get('article:7'), undefined)
+
+  clock = 0
+  await cache.run('article:8', 60_000, async () => ({ id: 8, starred: false }))
+  assert.equal(cache.patch(['article:8'], () => undefined), 0, 'returning undefined leaves the value alone')
+  assert.deepEqual(cache.get('article:8'), { id: 8, starred: false })
+  cache.patch(['article:8'], (value) => ({ ...value, starred: true }))
+  assert.deepEqual(cache.get('article:8'), { id: 8, starred: true })
+}
+
 const tests = [
   freshHitDoesNotRefetch,
   expiredValueWaitsForFetch,
@@ -122,6 +157,8 @@ const tests = [
   beyondStaleWaits,
   expireDropsOnlyMatchingKeys,
   prefixDoesNotOvermatch,
+  patchRewritesValueAndKeepsFreshness,
+  patchSkipsExpiredAndUndefined,
 ]
 
 let failed = 0

@@ -78,9 +78,44 @@ const fake = http.createServer((req, res) => {
   if (url.pathname === '/v1/entries') {
     return reply(200, { total: entries.length, entries })
   }
-  if (/^\/v1\/entries\/\d+\/status$/.test(url.pathname)) return reply(204, {})
-  if (/^\/v1\/entries\/\d+\/bookmark$/.test(url.pathname)) return reply(204, {})
+  if (/^\/v1\/entries\/\d+\/status$/.test(url.pathname)) {
+    // Track the write so a refetch would visibly disagree with a patched page.
+    const id = Number(url.pathname.split('/')[3])
+    const entry = entries.find((candidate) => candidate.id === id)
+    let raw = ''
+    req.on('data', (chunk) => { raw += chunk })
+    req.on('end', () => {
+      try {
+        const body = JSON.parse(raw || '{}')
+        if (entry && body.status) entry.status = body.status
+      } catch {
+        // a malformed body simply leaves state alone
+      }
+    })
+    return reply(204, {})
+  }
+  if (/^\/v1\/entries\/\d+\/bookmark$/.test(url.pathname)) {
+    const id = Number(url.pathname.split('/')[3])
+    const entry = entries.find((candidate) => candidate.id === id)
+    let raw = ''
+    req.on('data', (chunk) => { raw += chunk })
+    req.on('end', () => {
+      try {
+        const body = JSON.parse(raw || '{}')
+        if (entry && typeof body.bookmark_id !== 'undefined') entry.starred = Boolean(body.bookmark_id)
+      } catch {
+        // ignore
+      }
+    })
+    return reply(204, {})
+  }
   if (url.pathname === '/v1/entries/stats') return reply(200, {})
+  if (/^\/v1\/entries\/\d+$/.test(url.pathname)) {
+    const id = Number(url.pathname.split('/')[3])
+    const entry = entries.find((candidate) => candidate.id === id)
+    if (!entry) return reply(404, { error_message: 'no such entry' })
+    return reply(200, entry)
+  }
   return reply(404, { error_message: `no fake for ${url.pathname}` })
 })
 
@@ -200,11 +235,42 @@ async function main() {
   )
   assert.ok(afterMarkCalls.length <= 1, `a read action should refetch counters only, saw ${afterMarkCalls.join(', ')}`)
 
-  // The entry page was expired by the action, so it is fetched again and shows
-  // the read state the action wrote.
+  // The page itself was patched, not dropped: the row that became read is gone
+  // from the unread page, the total follows, and no upstream call was needed.
   const beforePage = upstream.length
-  await get('/rss-miniflux/api/entries?filter=unread&limit=60&offset=0')
-  assert.equal(upstream.length, beforePage + 1, 'a write action must expire the entries page')
+  const patchedPage = await get('/rss-miniflux/api/entries?filter=unread&limit=60&offset=0')
+  assert.equal(upstream.length, beforePage, 'a write action must patch the entries page instead of refetching it')
+  assert.deepEqual(patchedPage.body.entries.map((entry) => entry.id), [102], 'the read row leaves an unread page')
+  assert.equal(patchedPage.body.total, 1, 'the patched page counts one fewer unread')
+
+  // A page that is not unread-filtered keeps the row: marking it read changes
+  // its state, it does not remove it from "All".
+  const allBefore = await get('/rss-miniflux/api/entries?filter=all&limit=60&offset=0')
+  assert.deepEqual(allBefore.body.entries.map((entry) => entry.id), [101, 102])
+  await post('/rss-miniflux/api/action', { action: 'mark_read', id: 102 })
+  const beforeAll = upstream.length
+  const allAfter = await get('/rss-miniflux/api/entries?filter=all&limit=60&offset=0')
+  assert.equal(upstream.length, beforeAll, 'an all-page is patched, not refetched')
+  assert.deepEqual(allAfter.body.entries.map((entry) => entry.id), [101, 102], 'an all-page keeps the row')
+  assert.equal(allAfter.body.entries.find((entry) => entry.id === 102).status, 'read', 'the row shows the new state')
+
+  // 4. One article, asked twice, costs one upstream call. Parsing and shaping
+  //    are not the cost; the Miniflux round trip is.
+  const beforeArticle = upstream.length
+  const article1 = await get('/rss-miniflux/api/entry?id=101')
+  assert.equal(article1.status, 200)
+  assert.equal(article1.body.item.title, 'One')
+  const article2 = await get('/rss-miniflux/api/entry?id=101')
+  assert.equal(article2.status, 200)
+  assert.equal(upstream.length, beforeArticle + 1, 'a repeated article must be served from memory')
+  assert.match(String(article2.headers.get('server-timing')), /entry;dur=\d+/, 'article timing must be reported')
+
+  // A write patches the cached article header in place as well.
+  const starred = await post('/rss-miniflux/api/action', { action: 'star', id: 101 })
+  assert.equal(starred.body.ok, true)
+  const afterStar = await get('/rss-miniflux/api/entry?id=101')
+  assert.equal(afterStar.body.item.starred, true, 'the star action patched the cached article')
+  assert.equal(upstream.length, beforeArticle + 2, 'patching must not refetch the article')
 
   // 4. Icons arrive in one batch, are cached, and never ask again.
   const beforeIcons = upstream.length
