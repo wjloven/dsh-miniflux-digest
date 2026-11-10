@@ -3257,6 +3257,10 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
       const listFollowRef = useRef('')
       useEffect(() => {
         if (!selectedId) return
+        // While a scope is being swapped the rows on screen still belong to the
+        // previous one; scrolling those would leave the new list parked at an
+        // offset that means nothing. The effect re-runs when the rows land.
+        if (listInfo.loading) return
         const list = listRef.current
         if (!list) return
         const marker = `${entriesKey}|${selectedId}`
@@ -3277,7 +3281,7 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         else if (rect.bottom > box.bottom - air) delta = rect.bottom - box.bottom + air
         if (Math.abs(delta) < 1) return
         list.scrollBy({ top: delta, behavior: scrollBehavior() })
-      }, [selectedId, entriesKey, visibleEntries])
+      }, [selectedId, entriesKey, visibleEntries, listInfo.loading])
 
       // j/k and the next/previous buttons walk the list; asking for the rows
       // around the open one while the reader is idle makes that walk instant.

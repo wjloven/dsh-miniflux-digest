@@ -273,6 +273,28 @@ async function run() {
     assert.equal(clicked.index, 10, `the click selected row ${clicked.index}`)
     assert.ok(clicked.visible, 'a clicked row is not visible in the list')
 
+    // 7. After a scope switch the follow still works: the guard that ignores
+    //    the previous scope's rows must not leave the new list stuck.
+    const afterScope = await evaluate(`(async () => {
+      const tab = [...document.querySelectorAll('.mrss-cat-tab')][1]
+      if (tab) tab.click()
+      const until = Date.now() + 15_000
+      while (Date.now() < until) {
+        const busy = document.querySelector('.mrss-list-head[data-loading="true"]')
+          || document.querySelector('[data-testid="list-skeleton"]')
+        if (!busy && document.querySelectorAll('.mrss-item').length > 3) break
+        await new Promise((resolve) => setTimeout(resolve, 60))
+      }
+      for (let index = 0; index < 6; index += 1) {
+        window.__press('j')
+        await new Promise((resolve) => setTimeout(resolve, 40))
+      }
+      await window.__settle()
+      return window.__state()
+    })()`)
+    assert.ok(afterScope.rows > 3, `the new scope has ${afterScope.rows} rows`)
+    assert.ok(afterScope.visible, 'the selection does not follow inside a new scope')
+
     assert.deepEqual(client.problems, [], `page errors: ${client.problems.join(' | ')}`)
     console.log('[list-follow] start:', JSON.stringify({ scrollTop: start.scrollTop, rowHeight: Math.round(start.rowHeight) }))
     console.log('[list-follow] j x8:', JSON.stringify({ index: walked.index, scrollTop: walked.scrollTop }))
