@@ -21,7 +21,7 @@ import {
 import { tweetFromSyndication } from './lib/tweet.js'
 import { createCache } from './lib/cache.js'
 
-const VERSION = '1.6.5'
+const VERSION = '1.6.6'
 const PREFIX = '/rss-miniflux/api'
 const CREDENTIAL_KEY = 'rss-miniflux'
 const META_TTL = 60_000
@@ -269,7 +269,10 @@ export function apply(ctx, config = {}) {
   const ICON_MISS_TTL = 24 * 60 * 60_000
   const ICON_BATCH_MAX = 200
   /** Upstream icon lookups in flight for one batch. */
-  const ICON_CONCURRENCY = 12
+  // Behind a proxy or VPN a dozen parallel TLS handshakes to one host is a
+  // burst that can come back as dropped connections; six still fills a cold
+  // icon batch quickly and each lookup is cached for days afterwards.
+  const ICON_CONCURRENCY = 6
   /** Larger icons skip the batch and load through <img>, which the browser caches. */
   const ICON_DATA_MAX = 48 * 1024
   const ICON_STORE_MAX = 2000
