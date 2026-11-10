@@ -28,6 +28,7 @@
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
+    "screenshots.json",
     "README.md",
     "scripts/*.mjs"
   ],
