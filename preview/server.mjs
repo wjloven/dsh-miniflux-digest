@@ -22,6 +22,10 @@ const PORT = portArg > 0 ? Number(process.argv[portArg + 1]) : 5577
 // what the panel paints before the network catches up.
 const delayArg = process.argv.indexOf('--delay')
 const DELAY = delayArg > 0 ? Math.max(0, Number(process.argv[delayArg + 1]) || 0) : 0
+// Reproduces hosts that send `Referrer-Policy: no-referrer` (the Harness shell
+// did), where a YouTube embed without its own policy answers error 153.
+const referrerArg = process.argv.indexOf('--referrer-policy')
+const REFERRER_POLICY = referrerArg > 0 ? String(process.argv[referrerArg + 1] || '') : ''
 const LATE_ROUTES = ['/bootstrap', '/entries', '/entry', '/feed-stats', '/icons']
 
 const MIME = {
@@ -36,8 +40,8 @@ const MIME = {
 const PALETTE = ['#4d93f8', '#ec6a5e', '#f2b44b', '#5bbd8b', '#8b6bd6', '#38a8c9', '#d6709b']
 
 let accounts = [
-  { id: 'default', baseUrl: 'https://rss.example.com', username: 'demo' },
-  { id: 'work', baseUrl: 'https://reader.example.net', username: 'work' },
+  { id: 'default', baseUrl: 'https://rss.wjloven.com', username: 'nocosa' },
+  { id: 'work', baseUrl: 'https://rss.example.net', username: 'work' },
 ]
 let activeAccountId = 'default'
 let lastBaseUrl = ''
@@ -255,7 +259,12 @@ const server = http.createServer((req, res) => {
     '/preview.css': [path.join(here, 'preview.css'), 'text/css; charset=utf-8'],
   }
   const entry = files[route]
-  if (entry && fs.existsSync(entry[0])) return send(res, 200, fs.readFileSync(entry[0]), entry[1])
+  if (entry && fs.existsSync(entry[0])) {
+    if (REFERRER_POLICY && entry[1].startsWith('text/html')) {
+      res.setHeader('referrer-policy', REFERRER_POLICY)
+    }
+    return send(res, 200, fs.readFileSync(entry[0]), entry[1])
+  }
   if (route.startsWith('/vendor/')) {
     const file = path.join(here, 'vendor', path.basename(route))
     if (fs.existsSync(file)) return send(res, 200, fs.readFileSync(file), MIME[path.extname(file)] || 'text/plain')

@@ -10,6 +10,7 @@ Why the panel works the way it does, and how it compares with Nextflux.
 - **图标永远有东西可画。** 每个源的真图标要么来自本地图标库，要么来自 `/icons` 批量接口，两者都没有时画首字母色块（色相由标题哈希决定，同一个源永远同色），真图标到了淡入覆盖。这样既没有空洞、没有跳动，也不会因为侧栏有 200 个源就打 200 个慢请求——只有滚到视野附近（提前 240px）的才会去取。
 - **先画后更新，不先空白。** 客户端把上一帧（账号、目录、一页条目、当前正文）写进 localStorage，模块加载时同步读回来当首帧；挂载后在 `requestIdleCallback` 里静默重取一次，界面原地更新、不跳滚动。冷启动（没有快照）画骨架而不是空状态。这是照 Nextflux「先读 IndexedDB 再同步」的做法搬过来的，区别是面板只能用 localStorage：它的读取是同步的，正好能避免首帧先渲染空壳。
 - **面板自带 border-box reset。** 宿主没有全局 `box-sizing` 重置（它的组件各自 opt in），所以 `client.js` 在 `.mrss-root` 子树里补了一条；否则搜索框、列表行会按 padding 撑宽，超出列表栏。
+- **播放器要自己的 referrer 策略。** 宿主文档若发 `Referrer-Policy: no-referrer`，YouTube 看不到嵌入来源就报 `Error 153 · Video player configuration error`。iframe 上单独写 `referrerpolicy="strict-origin-when-cross-origin"` 覆盖文档策略：只有 origin 发给 YouTube，页面其余部分仍保持严格默认。sandbox 必须保留 `allow-scripts` 与 `allow-same-origin`，缺后者播放器是黑屏。
 - **HTML 在 Host 侧清洗。** 阅读器用 `innerHTML` 渲染，所以清洗只有一处：标签白名单、属性白名单、链接只允许 http(s)/mailto/页内 fragment、`img` 加 `loading=lazy` 与 `referrerpolicy=no-referrer`。
 - **排版标记在 Host 侧生成，客户端只认 `data-mrss-*`。** 正文里的 `class` 一律被清洗器丢掉，所以「这段是脚注」「这个代码块是 Python」这类判断只能在 Host 侧做一次：id 改写成 `mrss-N` 并同步改写 fragment 链接，脚注标 `data-mrss-fn` / `data-mrss-note`，代码块标 `data-lang`，空段落与重复标题直接删掉。客户端不做二次猜测，也不会因为源站换了 class 就失效。
 - **暗色正文比标题暗一档。** 借自 Ringo：全亮正文在长文里会晃眼，所以暗色下正文按 88% 混入底色，标题保持最亮；`prefers-contrast: more` 时再拉回满对比。

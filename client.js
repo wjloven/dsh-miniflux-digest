@@ -410,6 +410,12 @@ window.__ModuleLoader__.load({
           src,
           title,
           loading: 'lazy',
+          // YouTube refuses a frame whose origin it cannot see: with the
+          // document's own `Referrer-Policy: no-referrer` the player answers
+          // "Video player configuration error — Error 153". An element-level
+          // policy overrides the document's, so the player gets the origin it
+          // requires while the rest of the page keeps the stricter default.
+          referrerPolicy: 'strict-origin-when-cross-origin',
           allow: 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen',
           allowFullScreen: true,
           sandbox: 'allow-scripts allow-same-origin allow-presentation allow-popups allow-popups-to-escape-sandbox allow-forms',

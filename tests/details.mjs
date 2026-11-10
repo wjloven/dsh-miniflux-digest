@@ -252,7 +252,44 @@ async function run() {
     assert.equal(markAll.after.rows, 0, 'the unread list should be empty right after a successful mark-all')
     assert.equal(markAll.settled.disabled, false, 'the button must be usable again')
 
-    // 3. A fetched original page keeps its `<figure><img width height>`: the
+    // 3. The YouTube embed carries its own referrer policy. Without it a host
+    //    that sends `Referrer-Policy: no-referrer` makes the player answer
+    //    "Video player configuration error — Error 153", because it cannot see
+    //    the embedding origin.
+    //    The sample rows differ between data sets, so open the video one by its
+    //    own title instead of assuming it is first.
+    const embed = await evaluate(`(async () => {
+      const rows = [...document.querySelectorAll('.mrss-item')]
+      const row = rows.find((node) => /youtube/i.test(node.querySelector('.mrss-item-title')?.textContent || ''))
+      if (!row) return { missing: true, reason: 'no youtube sample row' }
+      row.click()
+      const until = performance.now() + 15_000
+      while (performance.now() < until) {
+        if (document.querySelector('.mrss-embed iframe')) break
+        await new Promise((resolve) => setTimeout(resolve, 60))
+      }
+      const frame = document.querySelector('.mrss-embed iframe')
+      if (!frame) return { missing: true, reason: 'no embed rendered' }
+      return {
+        src: frame.getAttribute('src'),
+        referrerPolicy: frame.getAttribute('referrerpolicy'),
+        sandbox: frame.getAttribute('sandbox') || '',
+        allowFullScreen: frame.hasAttribute('allowfullscreen'),
+      }
+    })()`)
+
+    assert.ok(!embed.missing, `the preview should render a YouTube embed (${embed.reason || ''})`)
+    assert.match(embed.src, /^https:\/\/www\.youtube-nocookie\.com\/embed\//, `unexpected embed src: ${embed.src}`)
+    assert.equal(
+      embed.referrerPolicy,
+      'strict-origin-when-cross-origin',
+      'the embed must send its origin even when the host document is no-referrer (error 153)',
+    )
+    assert.match(embed.sandbox, /allow-scripts/, 'the player needs scripts')
+    assert.match(embed.sandbox, /allow-same-origin/, 'without allow-same-origin the player renders a black frame')
+    assert.equal(embed.allowFullScreen, true, 'the player must be able to go fullscreen')
+
+    // 4. A fetched original page keeps its `<figure><img width height>`: the
     //    attributes must supply the aspect ratio, not the used size. 9to5Google's
     //    1440x810 hero used to render 655x810 (squashed) because only the width
     //    was clamped.
@@ -294,6 +331,7 @@ async function run() {
     assert.deepEqual(client.problems, [], `page errors: ${client.problems.join(' | ')}`)
     console.log('[details] title:', JSON.stringify({ href: title.href, target: title.target, tooltip: title.tooltip }))
     console.log('[details] mark-all:', JSON.stringify({ during: markAll.during, goneMs: markAll.goneMs, after: markAll.after }))
+    console.log('[details] embed:', JSON.stringify({ src: embed.src.slice(0, 48), referrerPolicy: embed.referrerPolicy }))
     console.log('[details] figure:', JSON.stringify(figure))
     client.close()
   } finally {
