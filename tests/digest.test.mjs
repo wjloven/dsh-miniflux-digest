@@ -78,11 +78,25 @@ assert.ok(!/<a[^>]*data-mrss-fn="[^"]*">↩/.test(rich.html), 'return links are 
 // Fragments that the sanitizer generated stay relative.
 assert.ok(rich.html.includes('href="#mrss-'), 'fragments stay relative instead of being absolutised')
 
+// A fetched original page keeps its <figure><img width height>. The attributes
+// survive sanitizing on purpose: they give the reader the intrinsic ratio to
+// reserve space with. The panel must not let them dictate the used size, which
+// is what squashed 9to5Google's 1440x810 hero into 655x810.
+const fetched = sanitizeArticleHtml(
+  '<figure class="img-border"><img width="1440" height="810" src="https://example.com/hero.jpg" alt=""></figure>',
+  'https://example.com/a',
+)
+console.log('--- fetched figure ---')
+console.log(fetched.html)
+assert.ok(/<figure>/.test(fetched.html), 'the figure wrapper survives')
+assert.ok(/width="1440"/.test(fetched.html) && /height="810"/.test(fetched.html), 'the intrinsic size is kept for the aspect ratio')
+assert.ok(!/class="img-border"/.test(fetched.html), 'the source class is still stripped')
+
 // X syndication: pick the highest-bitrate mp4, skip HLS and non-twimg hosts.
 const tweet = tweetFromSyndication({
   text: 'short text',
   note_tweet: { note_tweet_results: { result: { text: 'long note text' } } },
-  user: { name: 'Example User', screen_name: 'example' },
+  user: { name: 'Nevo', screen_name: 'wickedguro' },
   mediaDetails: [
     { type: 'photo', media_url_https: 'https://pbs.twimg.com/media/a.jpg', ext_alt_text: 'alt' },
     {

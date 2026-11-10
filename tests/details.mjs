@@ -216,9 +216,49 @@ async function run() {
     assert.equal(markAll.settled.icon, true, 'the checkmark must come back after the write')
     assert.equal(markAll.settled.disabled, false, 'the button must be usable again')
 
+    // 3. A fetched original page keeps its `<figure><img width height>`: the
+    //    attributes must supply the aspect ratio, not the used size. 9to5Google's
+    //    1440x810 hero used to render 655x810 (squashed) because only the width
+    //    was clamped.
+    const figure = await evaluate(`(async () => {
+      const body = document.querySelector('.mrss-article-body')
+      const holder = document.createElement('div')
+      holder.innerHTML = '<figure><img width="1440" height="810" alt="" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%221440%22 height=%22810%22%3E%3Crect width=%22100%25%22 height=%22100%25%22 fill=%22%231a73e8%22/%3E%3C/svg%3E"></figure>'
+      body.appendChild(holder)
+      const img = holder.querySelector('img')
+      await new Promise((resolve) => {
+        if (img.complete && img.naturalWidth > 0) return resolve()
+        img.addEventListener('load', resolve, { once: true })
+        img.addEventListener('error', resolve, { once: true })
+      })
+      const rect = img.getBoundingClientRect()
+      const result = {
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        naturalWidth: img.naturalWidth,
+        naturalHeight: img.naturalHeight,
+        bodyWidth: Math.round(body.getBoundingClientRect().width),
+        cssHeight: getComputedStyle(img).height,
+        cssWidth: getComputedStyle(img).width,
+      }
+      holder.remove()
+      return result
+    })()`)
+
+    assert.ok(figure.naturalWidth > 0, 'the probe image did not load')
+    assert.ok(figure.width < figure.naturalWidth, 'the probe image should have been clamped by the column')
+    const rendered = figure.width / figure.height
+    const intrinsic = figure.naturalWidth / figure.naturalHeight
+    assert.ok(
+      Math.abs(rendered - intrinsic) < 0.03,
+      `the image is squashed: rendered ${figure.width}x${figure.height} (ratio ${rendered.toFixed(3)}) for an intrinsic ratio of ${intrinsic.toFixed(3)}`,
+    )
+    assert.ok(figure.height < figure.bodyWidth, 'the image is taller than the column')
+
     assert.deepEqual(client.problems, [], `page errors: ${client.problems.join(' | ')}`)
     console.log('[details] title:', JSON.stringify({ href: title.href, target: title.target, tooltip: title.tooltip }))
     console.log('[details] mark-all:', JSON.stringify(markAll))
+    console.log('[details] figure:', JSON.stringify(figure))
     client.close()
   } finally {
     cleanup()

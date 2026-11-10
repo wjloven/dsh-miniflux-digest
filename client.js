@@ -1876,7 +1876,12 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
 .mrss-tweet-video{display:block;align-self:center;width:auto;height:auto;max-width:100%;max-height:min(420px,60vh);margin:0;border-radius:10px;border:1px solid var(--dsw-alias-border-l1);background:#000}
 .mrss-tweet-text{margin:0;white-space:pre-wrap;line-height:1.75;font-size:.98em;color:var(--dsw-alias-label-primary)}
 .mrss-article-body figure{position:relative;inset-inline-start:50%;translate:-50% 0;width:max-content;max-inline-size:calc(100% + 2*var(--mrss-pad-inline));margin:1.2em 0}
-.mrss-article-body figure :is(img,video){position:static;inset:auto;translate:none;max-inline-size:100%;margin:0}
+.mrss-article-body figure :is(img,video){position:static;inset:auto;translate:none;width:auto;height:auto;max-inline-size:100%;margin:0}
+/* A fetched original page keeps the img width/height attributes. Without
+   height:auto the width attribute is clamped by the column while the height
+   attribute stands, and 9to5Google's 1440x810 hero became 655x810 — the picture
+   looked squeezed. The attributes still supply the intrinsic ratio (so nothing
+   shifts while loading), they just stop dictating the used size. */
 .mrss-article-body figcaption{font-size:.8em;line-height:1.55;color:var(--mrss-muted);margin-top:.6em;text-align:center}
 .mrss-article-body a{color:var(--mrss-link,var(--dsw-alias-brand-primary));text-decoration-line:underline;text-decoration-color:color-mix(in srgb,currentColor 38%,transparent);text-underline-offset:.2em;text-decoration-thickness:from-font;transition:text-decoration-color .15s ease}
 .mrss-article-body a:hover{text-decoration-color:currentColor}
