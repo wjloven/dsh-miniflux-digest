@@ -561,11 +561,11 @@ export function apply(ctx, config = {}) {
       const next = Math.max(0, current + delta)
       if (next === current) return undefined
       unreads[key] = next
-      return {
-        ...value,
-        unreads,
-        total: Math.max(0, (Number(value.total) || 0) + delta),
-      }
+      const patched = { ...value, unreads }
+      // Miniflux 2.x answers `{reads, unreads}` without a total; only move one
+      // when the server actually reports it.
+      if (typeof value.total === 'number') patched.total = Math.max(0, value.total + delta)
+      return patched
     })
     return touched > 0
   }
