@@ -116,6 +116,7 @@ For comprehensive implementation notes—including HTML sanitization, code detec
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Credential management, recovery steps, and debugging logs |
 | [docs/verification.md](docs/verification.md) | Test coverage and verification status |
 | [docs/development.md](docs/development.md) | Local preview workflow, screenshot generation, and project layout |
+| [docs/dsh-webview-referer.md](docs/dsh-webview-referer.md) | Why a desktop shell must supply the Referer for YouTube embeds (and the patch) |
 | [docs/loading-performance.md](docs/loading-performance.md) | First-frame snapshot caching, warm-path caches and prefetching |
 | [docs/ringo-reading-design.md](docs/ringo-reading-design.md) | Typography and reading surface design choices |
 
