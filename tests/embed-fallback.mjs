@@ -200,7 +200,8 @@ async function run() {
 
     const withReferer = await openVideoArticle({ referer: true })
     assert.equal(withReferer.kind, 'frame', `a Referer should keep the real player, saw ${JSON.stringify(withReferer)}`)
-    assert.match(withReferer.href, /youtube-nocookie\.com\/embed\//)
+    // The player is our own document now; it is what carries the referrer policy.
+    assert.match(withReferer.href, /^\/rss-miniflux\/player\?id=/, `unexpected player src: ${withReferer.href}`)
 
     const withoutReferer = await openVideoArticle({ referer: false })
     assert.equal(withoutReferer.kind, 'card', `a missing Referer should fall back to a card, saw ${JSON.stringify(withoutReferer)}`)

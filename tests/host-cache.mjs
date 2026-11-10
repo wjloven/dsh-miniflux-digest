@@ -16,6 +16,7 @@ import http from 'node:http'
 import { apply } from '../index.js'
 
 const TOKEN = 'host-cache-token'
+const ENDPOINT = '/rss-miniflux/api'
 const LATENCY = 60
 
 const upstream = []
@@ -182,8 +183,12 @@ async function main() {
   }
   apply(ctx, { baseUrl, apiToken: TOKEN, timeoutMs: 5_000 })
 
-  assert.equal(resourceRoutes.length, 1, 'the reader resource route must be registered')
-  const reader = resourceRoutes[0].resource
+  assert.equal(resourceRoutes.length, 2, 'the reader API and the player page must both be registered')
+  const apiRoute = resourceRoutes.find((route) => route.path === ENDPOINT)
+  const playerRoute = resourceRoutes.find((route) => route.path === '/rss-miniflux/player')
+  assert.ok(apiRoute, 'the reader API route must be registered')
+  assert.ok(playerRoute, 'the player page route must be registered')
+  const reader = apiRoute.resource
   const action = exactRoutes.get('/rss-miniflux/api/action')
   assert.ok(action, 'the write action route must be registered')
   const manage = exactRoutes.get('/rss-miniflux/api/manage')
@@ -311,6 +316,24 @@ async function main() {
   assert.equal(upstream.length, beforeIcons + 2, 'the single-icon route must reuse the cache')
   const missing = await reader(new Request('http://127.0.0.1/rss-miniflux/api/icon?id=43'), { principal: { kind: 'owner' } })
   assert.equal(missing.status, 204, 'a feed without an icon answers 204')
+
+  // 4b. The player page: ours, with the referrer policy YouTube needs — this is
+  //     what makes an embed survive a `no-referrer` shell (error 153).
+  const playerPage = await playerRoute.resource(
+    new Request('http://127.0.0.1/rss-miniflux/player?id=aqz-KE-bpKQ'),
+    { principal: { kind: 'owner' } },
+  )
+  assert.equal(playerPage.status, 200)
+  assert.equal(playerPage.headers.get('referrer-policy'), 'strict-origin-when-cross-origin', 'the player document must send an origin')
+  const playerHtml = await playerPage.text()
+  assert.match(playerHtml, /<meta name="referrer" content="strict-origin-when-cross-origin">/, 'the meta tag backs up the header')
+  assert.match(playerHtml, /youtube-nocookie\.com\/embed\/aqz-KE-bpKQ/, 'the page embeds the requested video')
+  assert.match(playerHtml, /allowfullscreen/, 'fullscreen must survive')
+  const badPlayer = await playerRoute.resource(
+    new Request('http://127.0.0.1/rss-miniflux/player?id=..%2F..%2Fetc%2Fpasswd'),
+    { principal: { kind: 'owner' } },
+  )
+  assert.equal(badPlayer.status, 400, 'a video id that is not an id must be refused')
 
   // 5. A write patches the counters it changed, so the next bootstrap does not
   //    have to refetch them (that refetch is what used to fail and blank the

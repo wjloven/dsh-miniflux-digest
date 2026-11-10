@@ -112,9 +112,41 @@ function send(res, status, body, type = 'application/json; charset=utf-8') {
   else write()
 }
 
+/**
+ * Mirrors the Host's player document: its own referrer policy is the reason a
+ * YouTube embed survives a `no-referrer` shell (error 153 without it).
+ */
+function playerPage(id) {
+  const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?rel=0&playsinline=1`
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>YouTube</title>
+<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}</style>
+</head><body>
+<iframe src="${src}" title="YouTube video" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" allowfullscreen sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"></iframe>
+</body></html>`
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`)
   const route = url.pathname
+
+  if (route === '/rss-miniflux/player') {
+    const id = String(url.searchParams.get('id') || '')
+    if (!/^[A-Za-z0-9_-]{6,20}$/.test(id)) {
+      res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+      return res.end('Bad video id')
+    }
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'referrer-policy': 'strict-origin-when-cross-origin',
+      'cache-control': 'private, max-age=3600',
+      'content-security-policy': "default-src 'none'; frame-src https://www.youtube-nocookie.com; style-src 'unsafe-inline'",
+    })
+    return res.end(playerPage(id))
+  }
 
   if (route.startsWith('/rss-miniflux/api/')) {
     const api = route.slice('/rss-miniflux/api'.length)

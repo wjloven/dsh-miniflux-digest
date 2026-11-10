@@ -279,7 +279,9 @@ async function run() {
     })()`)
 
     assert.ok(!embed.missing, `the preview should render a YouTube embed (${embed.reason || ''})`)
-    assert.match(embed.src, /^https:\/\/www\.youtube-nocookie\.com\/embed\//, `unexpected embed src: ${embed.src}`)
+    // The panel embeds the Host's own player document, not YouTube directly:
+    // that page carries the referrer policy the player needs.
+    assert.match(embed.src, /^\/rss-miniflux\/player\?id=/, `unexpected embed src: ${embed.src}`)
     assert.equal(
       embed.referrerPolicy,
       'strict-origin-when-cross-origin',

@@ -21,8 +21,14 @@ import {
 import { tweetFromSyndication } from './lib/tweet.js'
 import { createCache } from './lib/cache.js'
 
-const VERSION = '1.6.8'
+const VERSION = '1.6.9'
 const PREFIX = '/rss-miniflux/api'
+// A player document we serve ourselves. YouTube needs the embedding request to
+// carry a Referer; an app shell can strip it from its own pages, but the policy
+// of *this* document is ours to set — which is what the YouTube terms suggest
+// ("provide an HTTP Referer to their requests").
+const PLAYER_PATH = '/rss-miniflux/player'
+const PLAYER_ID = /^[A-Za-z0-9_-]{6,20}$/
 const CREDENTIAL_KEY = 'rss-miniflux'
 const META_TTL = 60_000
 const LIST_TTL = 20_000
@@ -1239,6 +1245,51 @@ export function apply(ctx, config = {}) {
   // HTTP API for the reader panel
   // -------------------------------------------------------------------------
 
+  /**
+   * The standalone player document: a black page with one YouTube iframe, its
+   * own referrer policy (header *and* meta, since either can be the one that
+   * survives), and a CSP that allows nothing but the player.
+   */
+  function playerPage(id) {
+    const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?rel=0&playsinline=1`
+    return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>YouTube</title>
+<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}</style>
+</head><body>
+<iframe src="${src}" title="YouTube video" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" allowfullscreen sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"></iframe>
+</body></html>`
+  }
+
+  function playerResponse(id) {
+    return new Response(playerPage(id), {
+      status: 200,
+      headers: {
+        'content-type': 'text/html; charset=utf-8',
+        // The whole point of this page: the player gets an origin even when the
+        // embedding application suppresses it for its own documents.
+        'referrer-policy': 'strict-origin-when-cross-origin',
+        'cache-control': 'private, max-age=3600',
+        'content-security-policy': "default-src 'none'; frame-src https://www.youtube-nocookie.com; style-src 'unsafe-inline'",
+        'x-content-type-options': 'nosniff',
+      },
+    })
+  }
+
+  async function handlePlayer(request, peer) {
+    if (peer && peer.principal && peer.principal.kind !== 'owner') {
+      return new Response('Local user only', { status: 403, headers: { 'content-type': 'text/plain; charset=utf-8' } })
+    }
+    const url = new URL(request.url, 'http://127.0.0.1')
+    const id = String(url.searchParams.get('id') || '')
+    if (!PLAYER_ID.test(id)) {
+      return new Response('Bad video id', { status: 400, headers: { 'content-type': 'text/plain; charset=utf-8' } })
+    }
+    return playerResponse(id)
+  }
+
   class HttpError extends Error {
     constructor(status, code, message) {
       super(message)
@@ -1748,6 +1799,14 @@ export function apply(ctx, config = {}) {
         resource: (request, peer) => handleApi(request, peer),
       }),
     'rss-miniflux: reader API',
+  )
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'prefix',
+      path: PLAYER_PATH,
+      resource: (request, peer) => handlePlayer(request, peer),
+    }),
+    'rss-miniflux: player page',
   )
   ctx.effect(
     () => writeRoute(`${PREFIX}/action`, ['POST'], (body) => handleAction(body)),

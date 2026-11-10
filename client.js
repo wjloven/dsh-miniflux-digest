@@ -392,7 +392,10 @@ window.__ModuleLoader__.load({
     function embedSource(embed) {
       const id = String(embed?.id || '')
       if (embed?.provider === 'youtube' && VIDEO_ID.test(id)) {
-        return `https://www.youtube-nocookie.com/embed/${id}?rel=0`
+        // Through our own player document, not straight at YouTube: that page
+        // sets its own referrer policy, so the player still gets an origin when
+        // the app shell suppresses one for this page (YouTube error 153).
+        return `${API.replace(/\/api$/, '')}/player?id=${encodeURIComponent(id)}`
       }
       if (embed?.provider === 'bilibili' && /^(?:BV[0-9A-Za-z]+|av\d+)$/.test(id)) {
         const query = /^av/i.test(id) ? `aid=${id.slice(2)}` : `bvid=${id}`
