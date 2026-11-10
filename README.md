@@ -1,56 +1,58 @@
-# Miniflux digest
+# Miniflux Digest
 
-**Elegant Miniflux RSS digest for your DeepSeek Harness.**
+**A desktop reader and AI digest plugin for Miniflux inside DeepSeek Harness.**
 
-Your feeds live in Miniflux. This plugin brings them into DeepSeek Harness as a proper reading panel, so you can skim the unread, read the long ones, and ask your assistant what is worth your time — without opening another tab.
+[English](#features) | [中文说明](#中文说明)
+
+Bring your Miniflux subscriptions directly into DeepSeek Harness. Miniflux Digest provides a dedicated, distraction-free three-column reading workspace—skim incoming feeds, immerse yourself in long-form articles, and let your AI assistant synthesize daily digests, extract insights, or recommend key readings without context switching.
 
 ![List and sidebar](preview/shots/panel-list.jpg)
 
 ## Screenshots
 
-| Reading | Paper surface |
+| Reading View | Paper Texture |
 | --- | --- |
 | ![Reader](preview/shots/reader-light.jpg) | ![Paper](preview/shots/reader-paper.jpg) |
 
-| Dark | Media and code |
+| Dark Mode | Media & Code |
 | --- | --- |
 | ![Dark](preview/shots/reader-dark.jpg) | ![Figure](preview/shots/reader-figure.jpg) |
 
-| Footnotes open in place | Settings → Appearance |
+| In-Place Footnotes | Settings & Appearance |
 | --- | --- |
 | ![Footnote](preview/shots/reader-footnote.jpg) | ![Settings](preview/shots/settings-appearance.jpg) |
 
-## What it does
+## Features
 
-- **One panel, three columns.** Categories and feeds on the left, the article list in the middle, the article itself on the right. Nothing opens a new tab.
-- **Built for reading.** Adjustable type size, line height and measure; a paper surface for long sessions; dark mode; images that may run past the column; footnotes that open where you clicked them; code blocks labelled with their language.
-- **Picks up where you left off.** Reopen the panel and you are on the same article, at the same scroll position, with the content already there instead of a blank screen.
-- **Filters that stay in sync.** Starred / Unread / All filters the feed list and the article list together.
-- **English and 简体中文.** Switch any time in Settings → General.
-- **Video plays inline** for YouTube, Bilibili and X posts.
-- **Keyboard first.** `j` / `k`, `m`, `s`, `c`, `v`, `g`, `w`, `f` — the keys a reader expects.
-- **Your assistant can read along.** Ask for a digest, a briefing on one category, or "read this one"; the tools below share the same account and unread state.
+- **Three-column reading workspace:** Categories and feeds on the left, an article feed in the center, and the full reader on the right. Everything opens in place without spawning external tabs.
+- **Crafted for long-form reading:** Configurable font sizes, line heights, and reading measures. Includes a soothing paper texture mode, a refined dark theme (with softened text brightness for eye comfort), breakout figures, syntax-highlighted code blocks, and footnotes that expand directly at the anchor point.
+- **Instant state restoration:** Remembers your active feed, article, and exact scroll position. Thanks to local state caching, reopening the panel displays content instantly without layout shifts or cold-start blanks.
+- **Synchronized triage filters:** Switching between Starred, Unread, and All states simultaneously updates both feed badges and the article queue.
+- **Embedded media playback:** Plays video embeds from YouTube, Bilibili, and X (Twitter) natively within the reader.
+- **Keyboard-driven workflow:** Navigate articles and manage state effortlessly using standard reader keys (`j` / `k` to move, `m` to toggle read, `s` to star, `c` to copy clean Markdown, `v` to visit the original web page).
+- **Deep assistant integration:** Built-in tools allow your AI agent to query unread statistics, summarize whole categories, or parse article content using the same account and read states.
+- **Bilingual interface:** Seamlessly switch between English and Simplified Chinese under Settings → General.
 
 ## Requirements
 
-- DeepSeek Harness 0.2 or newer
-- A Miniflux instance (2.0+ is fine; 2.3.2+ enables batch starring)
+- DeepSeek Harness >= 0.2
+- Miniflux instance >= 2.0 (Miniflux >= 2.3.2 required for batch starring)
 
-## Install
+## Installation
 
 ```bash
 dsh plugin --profile desktop add /path/to/dsh-miniflux-digest
 ```
 
-Then enable the `rss-miniflux` row in the plugin manager. The panel appears in the sidebar.
+After installing, enable `rss-miniflux` in your Plugin Manager. The reading panel will dock into the sidebar.
 
-To update, pull the repo and toggle that row off and on again.
+To update, pull the latest repository changes and toggle the plugin switch off and on again.
 
-## Connect your Miniflux
+## Connecting to Miniflux
 
-The first time you open the panel it asks for two things: your server address and an API token (Miniflux → Settings → API keys). It checks the connection right away.
+On initial launch, the setup modal will prompt you for your server address and API token (generate one in Miniflux under **Settings → API Keys**). The plugin tests the connection immediately.
 
-If you would rather not type it, set `MINIFLUX_BASE_URL` and `MINIFLUX_API_TOKEN`, or pass them as plugin config. Config wins over the saved credential, which wins over the environment.
+You can also provide credentials via environment variables or plugin configuration:
 
 ```yaml
 - id: rss-miniflux
@@ -60,131 +62,170 @@ If you would rather not type it, set `MINIFLUX_BASE_URL` and `MINIFLUX_API_TOKEN
     timeoutMs: 15000
 ```
 
-No account at hand? Close the dialog and browse the built-in demo entries.
+Alternatively, export `MINIFLUX_BASE_URL` and `MINIFLUX_API_TOKEN` in your environment.
+Precedence: Plugin Configuration > Saved Credentials > Environment Variables.
 
-## Use it from the assistant
+> **Tip:** You can explore the full interface without credentials by closing the setup dialog to load the built-in demo feeds.
 
-| Tool | What it gives you |
+## Assistant Tools
+
+The plugin provides six tools that share session credentials and unread states with the desktop UI:
+
+| Tool | Purpose |
 | --- | --- |
-| `miniflux_overview` | Connection status, unread counts by category and feed |
-| `miniflux_digest` | A brief of the unread: time window, distribution, recurring stories, what is worth a slow read and why |
-| `miniflux_briefing` | A model-written briefing for one category, in the conversation |
-| `miniflux_read` | The full text of one article, as Markdown |
-| `miniflux_search` | Search your entries by keyword |
-| `miniflux_act` | Mark read or unread, star, refresh a feed or category |
+| `miniflux_overview` | Checks connection status and summarizes unread counts across categories and feeds |
+| `miniflux_digest` | Generates an unread digest covering time range, feed distribution, recurring themes, and recommended deep reads |
+| `miniflux_briefing` | Produces an executive briefing for a specific category directly in the conversation |
+| `miniflux_read` | Retrieves full article content formatted as clean Markdown |
+| `miniflux_search` | Searches subscriptions by keyword |
+| `miniflux_act` | Toggles read/unread status, updates stars, or triggers feed and category refreshes |
 
-Things worth asking:
+### Example Prompts
 
-> Brief me on the Tech category and tell me the three topics that come up most.
+> "Give me a briefing on the Tech category and highlight the top 3 recurring topics."
 
-> What is in my unread right now, and which three pieces deserve a slow read?
+> "Check my unread queue and recommend three articles worth a slow read, along with your reasons."
 
-## Your data
+## Privacy & Security
 
-- **The token stays local.** It lives in the credential store of your Harness profile — not in a config file, and never in this repository.
-- **Traffic goes where you point it.** The only network calls are to your own Miniflux server. X posts additionally pull their video from `cdn.syndication.twimg.com`.
-- **Caches are disposable.** A short-lived cache on the host and a snapshot in the browser make reopening feel instant. Disconnecting, logging out or switching accounts clears them.
+- **Local credential isolation:** API tokens are stored securely in your local Harness profile vault—never exposed to disk configs or committed to version control.
+- **Direct communication:** Network calls connect strictly to your configured Miniflux server. Embedded X post videos resolve streams via `cdn.syndication.twimg.com`.
+- **Stateless caching:** Memory caches and UI snapshots exist only to deliver instantaneous page restoration. Disconnecting, logging out, or switching accounts flushes all cached data.
 
 ## Limitations
 
-- Needs a reachable Miniflux instance; there is no offline mode.
-- The panel is designed for a desktop-width window. On narrow windows the reading column gets tight.
-- Full-text fetching, feed discovery and batch starring depend on the Miniflux version behind you.
-- The Starred view counts stars over the most recent 1000 starred entries, so very large archives are partial.
-- Demo mode ships fictional sample entries so you can look around before connecting anything.
+- Requires an active, reachable Miniflux server; offline reading sync is not supported.
+- Optimized for desktop-width displays; very narrow split panels may compress the reading column.
+- Advanced capabilities like original content extraction, automatic feed discovery, and batch starring depend on your server-side Miniflux version.
+- The Starred view indexes the most recent 1,000 starred entries; extremely large archives will display recent subsets.
+- Built-in demo mode uses synthetic mock data for initial UI previews.
 
-The detailed list — indentation rules, code-block detection, video edge cases and so on — is in [docs/limitations.md](docs/limitations.md).
+For comprehensive implementation notes—including HTML sanitization, code detection, and video player fallbacks—refer to [docs/limitations.md](docs/limitations.md).
 
 ## Documentation
 
 | Document | Contents |
 | --- | --- |
-| [docs/ui-reference.md](docs/ui-reference.md) | Every control in the panel, region by region |
-| [docs/design.md](docs/design.md) | Why it works this way; comparison with Nextflux |
-| [docs/limitations.md](docs/limitations.md) | Edge cases and version requirements |
-| [docs/troubleshooting.md](docs/troubleshooting.md) | Credentials, recovery, logs |
-| [docs/verification.md](docs/verification.md) | What was tested and what was not |
-| [docs/development.md](docs/development.md) | Local preview, screenshots, file map |
-| [docs/loading-performance.md](docs/loading-performance.md) | How the first frame stays instant |
-| [docs/ringo-reading-design.md](docs/ringo-reading-design.md) | Reading-surface decisions |
+| [docs/ui-reference.md](docs/ui-reference.md) | Component-by-component overview of the reader interface |
+| [docs/design.md](docs/design.md) | Architectural rationale and comparison against Nextflux |
+| [docs/limitations.md](docs/limitations.md) | Edge cases, formatting rules, and version matrix |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | Credential management, recovery steps, and debugging logs |
+| [docs/verification.md](docs/verification.md) | Test coverage and verification status |
+| [docs/development.md](docs/development.md) | Local preview workflow, screenshot generation, and project layout |
+| [docs/loading-performance.md](docs/loading-performance.md) | First-frame snapshot caching and rendering optimization |
+| [docs/ringo-reading-design.md](docs/ringo-reading-design.md) | Typography and reading surface design choices |
 
 ## License
 
 MIT, see [LICENSE](LICENSE).
 
-Demo data in `preview/data.mjs` and `lib/demo.js` is invented: the feed names, headlines and article bodies do not refer to real publications. Screenshots in `preview/shots/` are generated from that demo data. Please keep it that way — no real account name, server address or subscription list belongs in this repository.
+All feed names, article headlines, and sample articles in `preview/data.mjs` and `lib/demo.js` are fictional. Preview screenshots in `preview/shots/` are generated from these sample fixtures. Do not commit actual account credentials, server addresses, or personal subscription lists into this repository.
 
 ---
 
 # 中文说明
 
-你的订阅都在 Miniflux 里，但每次想读的时候，还是得打开浏览器，在网页里点来点去。这个插件把未读直接搬进 DeepSeek Harness 的侧栏，看列表、读长文、问助手，都在同一个界面里完成。
+**面向 DeepSeek Harness 的 Miniflux RSS 阅读与智能体简报插件。**
 
-面板分成三栏。左边是你的分类和订阅源，中间是文章列表，右边是文章正文。点一下文章标题就能开始读，不会跳到新的标签页。字号、行高、行宽都可以调；界面有明亮和暗色两套配色，还有一个纸面风格的阅读底色；图片会稍微伸出文字栏外；点一下脚注，它会在原地展开，不用翻到文末；代码块上标着这段代码是什么语言。
+[English](#features) | [功能特性](#功能特性)
 
-关掉面板再打开，你还在刚才那篇文章、刚才那个位置，内容已经显示好了，不用对着空白等它加载。筛选条件也不会自己重置，你选了「未读」，换个分类继续看，仍然是「未读」。
+将你的 Miniflux 订阅无缝接入 DeepSeek Harness 桌面侧栏。Miniflux Digest 提供了专为桌面阅读打造的三栏工作区——无需在浏览器标签页与阅读器之间来回切换，即可在专注的排版中梳理未读流、沉浸阅读长文，并随时让 AI 助手梳理每日资讯、提炼专题简报或推荐精读内容。
 
-面板界面有中英文两种，在设置里随时切换。YouTube、Bilibili 和 X 的视频可以直接在文章里播放。常用的操作都配了快捷键，`j` / `k` 上下切换文章，`m` 标为已读，`s` 收藏，`c` 复制成 Markdown。
+## 功能特性
 
-助手也能看到你的未读。你可以让它整理一份速览，按分类写一份简报，或者把某篇文章读完，再把要点讲给你听。
+- **经典三栏布局**：左侧分类与订阅源树、中间文章信息流、右侧正文阅读区，所有操作原地完成，告别外跳标签页的碎片体验。
+- **专注长文阅读质感**：自由调节字号、行高与行宽；预置明亮、暗色以及温润的舒缓纸面（Paper）三种配色（暗色模式下正文亮度轻微柔化，减轻眼部疲劳）；支持宽幅图片自适应展示、原地直接展开的交互脚注，以及带语言标签的代码语法高亮。
+- **阅读状态秒级恢复**：自动记忆上次聚焦的分类、阅读文章与精确滚动位置。基于轻量本地快照机制，再次打开面板立即可见内容，无白屏加载与布局跳动。
+- **分类与列表实时联动**：星标、未读、全部等筛选维度在左侧源列表与中间文章列表间保持双向同步。
+- **多媒体原生内嵌**：文章中引用的 YouTube、Bilibili 及 X（Twitter）视频直接在阅读区原地嵌入播放，无需跳转第三方网站。
+- **全键盘快捷键流**：遵循经典阅读器习惯，支持 `j` / `k` 上下移动、`m` 标记已读、`s` 收藏星标、`c` 一键复制整洁 Markdown、`v` 访问原文。
+- **智能体深度联动**：内置 6 项原子助手工具，与侧栏共用同一账号会话与已读状态，让模型随时为你生成未读速览、专题汇总或抓取全文。
+- **双语界面支持**：原生适配简体中文与英文，可随时在「设置 → 通用」中自由切换。
 
-## 安装
+## 系统要求
 
-你需要先装好 DeepSeek Harness（0.2 以上），并且有一个自己的 Miniflux 服务器（2.0 以上就行；想要批量收藏，需要 2.3.2 以上）。
+- DeepSeek Harness >= 0.2
+- Miniflux 实例 >= 2.0（批量星标功能需 2.3.2 及以上）
+
+## 安装方式
 
 ```bash
 dsh plugin --profile desktop add /path/to/dsh-miniflux-digest
 ```
 
-装好之后，在插件管理里把 `rss-miniflux` 这一行打开，侧栏就会出现面板。以后更新时，先把仓库更新到最新，再把这一行关掉重新打开即可。
+安装完成后，在 Harness 插件管理器中开启 `rss-miniflux`，阅读面板即停靠在侧边栏中。
 
-## 连接
+如需更新，直接拉取仓库最新代码，并在插件管理中重新开关一次插件即可生效。
 
-第一次打开面板，它会问你的 Miniflux 地址和 API 令牌（在 Miniflux 里打开「设置 → API 密钥」就能创建）。填完会当场测试一次，连不上会直接告诉你原因。
+## 连接与配置
 
-不想手填的话，也可以设置环境变量 `MINIFLUX_BASE_URL` 和 `MINIFLUX_API_TOKEN`，或者写进插件的配置项。优先级从高到低是插件配置、保存过的凭据、环境变量。
+初次打开面板时，在弹出的配置对话框中填入你的 Miniflux 服务器地址与 API 令牌（在 Miniflux 中打开 **设置 → API 密钥** 生成），插件将立即校验连通性。
 
-暂时没有账号也没关系，关掉对话框，先看看内置的示例条目。
+如需免交互配置，可通过插件配置或环境变量预设凭据：
+
+```yaml
+- id: rss-miniflux
+  name: 'rss-miniflux-deepread'
+  config:
+    baseUrl: https://rss.example.com
+    timeoutMs: 15000
+```
+
+或在系统环境变量中导出 `MINIFLUX_BASE_URL` 与 `MINIFLUX_API_TOKEN`。
+生效优先级：插件配置 > 已保存凭据 > 环境变量。
+
+> **提示**：若暂无可用服务器，可直接关闭初始配置弹窗，直接体验内置的虚构演示条目。
 
 ## 助手工具
 
-这六个工具用的是同一个账号、同一份未读数据。
+插件内置 6 项工具，与前端面板共享同一 Miniflux 凭据和未读数据状态：
 
-| 工具 | 用来做什么 |
+| 工具 | 功能说明 |
 | --- | --- |
-| `miniflux_overview` | 查看连接状态，以及每个分类、每个订阅源还有多少篇没读 |
-| `miniflux_digest` | 生成一份未读速览，写清时间跨度、内容都来自哪儿、哪几篇值得慢慢读，并附上理由 |
-| `miniflux_briefing` | 按分类让模型写一份简报，直接在对话里给你 |
-| `miniflux_read` | 取出一篇文章的全文，Markdown 格式 |
-| `miniflux_search` | 按关键词搜索条目 |
-| `miniflux_act` | 标为已读或未读、收藏、刷新某个订阅源或分类 |
+| `miniflux_overview` | 查询当前连接状态，并按分类与订阅源汇总未读文章统计 |
+| `miniflux_digest` | 梳理未读条目，生成包含时间范围、来源分布、核心议题与深度阅读建议的速览 |
+| `miniflux_briefing` | 针对指定分类在对话中直接生成模型撰写的结构化简报 |
+| `miniflux_read` | 提取指定文章完整正文，输出为格式规范的 Markdown |
+| `miniflux_search` | 按关键词全局检索已订阅条目 |
+| `miniflux_act` | 执行操作：标记已读/未读、添加/取消星标、触发单源或分类刷新 |
 
-平时可以这样问：
+### 常用提问示例
 
-> 帮我按「科技」分类写份简报，说说出现最多的三个话题。
+> 帮我按「科技」分类生成一份简报，梳理出出现频次最高的三个核心话题。
 
-> 看一眼我的未读，挑三篇值得慢慢读的。
+> 快速看一眼我当前的未读列表，挑出三篇最值得慢读的文章并说明推荐理由。
 
-## 你的数据
+## 数据安全与隐私
 
-API 令牌保存在这台机器的 DeepSeek Harness 配置里，不会写进插件配置文件，也不会出现在仓库里。
+- **凭据本地隔离**：API 令牌仅加密保存在本机 Harness 凭据管理器中，绝不会写入仓库代码或明文配置中。
+- **纯净直接通信**：所有网络请求仅直连你指定的 Miniflux 实例（内嵌 X 视频流仅通过官方 `cdn.syndication.twimg.com` 解析）。
+- **即用即清缓存**：内存缓存与快照仅用于提升再次打开的响应速度；登出、断开连接或切换账号时会自动清空全部缓存。
 
-除了你自己的 Miniflux 服务器，插件唯一的外部请求是 X 条目的视频地址（`cdn.syndication.twimg.com`），只取一次，不会存到硬盘上。
+## 使用限制
 
-插件在后台留的短期缓存，和浏览器里存的快照，作用只是让你下次打开时快一点。断开连接、退出登录或者切换账号，这些缓存都会被清空。
+- 需连接可访问的 Miniflux 实例，暂不支持完全脱机离线同步。
+- 专为桌面端窗口宽度优化，分屏或过窄窗口下阅读栏可能会受到挤压。
+- 原文抓取、源探测与批量星标等高级特性受服务端 Miniflux 版本影响。
+- 星标视图默认索引最近 1,000 条收藏条目，超大规模归档将仅呈现最新批次。
+- 演示模式数据均为虚拟生成，仅用于无服务器环境下的界面预览。
 
-## 限制
+有关段落缩进规则、代码块识别逻辑与视频边界处理等详细技术说明，请参阅 [docs/limitations.md](docs/limitations.md)。
 
-- 你需要有自己的 Miniflux 服务器，没有联网就用不了。
-- 面板是按桌面宽度设计的，窗口变窄以后，右侧的阅读栏会被挤得很小。
-- 抓取原文、发现订阅来源、批量收藏这几个功能，能不能用取决于你的 Miniflux 版本。
-- 「星标」视图只统计最近 1000 条星标，如果你收藏得特别多，清单会显示不全。
-- 内置的示例条目是虚构的，方便你在连上服务器之前先看看界面长什么样。
+## 文档索引
 
-关于段落缩进、代码块识别，以及视频在哪些情况下会失败，这些细节都写在 [docs/limitations.md](docs/limitations.md)。
+| 文档 | 主要内容 |
+| --- | --- |
+| [docs/ui-reference.md](docs/ui-reference.md) | 面板界面分区与全部交互控件详解 |
+| [docs/design.md](docs/design.md) | 架构设计考量及与 Nextflux 的能力对照 |
+| [docs/limitations.md](docs/limitations.md) | 边界场景、排版规则与版本兼容性说明 |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | 凭据管理、故障排查与调试日志指南 |
+| [docs/verification.md](docs/verification.md) | 功能验证范围与测试状态记录 |
+| [docs/development.md](docs/development.md) | 本地预览开发、截图生成与代码目录映射 |
+| [docs/loading-performance.md](docs/loading-performance.md) | 首帧快照缓存与即时渲染优化机制 |
+| [docs/ringo-reading-design.md](docs/ringo-reading-design.md) | 阅读界面与排版体系设计决策 |
 
-## 许可
+## 开源许可
 
-本项目使用 MIT 许可，见 [LICENSE](LICENSE)。
+本项目基于 MIT 许可证分发，详见 [LICENSE](LICENSE)。
 
-`preview/data.mjs` 和 `lib/demo.js` 里的源名、标题、正文都是虚构的，截图也由这份数据生成。请不要把真实的账号名、服务器地址和订阅清单带进仓库。
+`preview/data.mjs` 与 `lib/demo.js` 中包含的订阅源名称、文章标题和正文均为虚拟构造，`preview/shots/` 目录中的预览截图亦基于虚构数据渲染生成。请勿将真实的账号凭据、私有服务器地址或个人订阅列表提交至本仓库。
