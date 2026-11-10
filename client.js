@@ -1950,6 +1950,9 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
    (Ringo's kicker); the rest of the title keeps the full size. */
 .mrss-article-kicker{display:block;font-size:.76em;font-weight:600;letter-spacing:.05em;color:var(--mrss-muted);margin:0 0 .5em}
 .mrss-article-title{font-size:var(--mrss-title-size,1.6em);line-height:1.26;margin:0 0 10px;font-weight:700;text-wrap:balance;color:var(--dsw-alias-label-primary)}
+.mrss-article-title-link{color:inherit;text-decoration:none;cursor:pointer}
+.mrss-article-title-link:hover{text-decoration:underline;text-decoration-thickness:from-font;text-underline-offset:.14em;text-decoration-color:color-mix(in srgb,currentColor 42%,transparent)}
+.mrss-article-title-link:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:4px;border-radius:4px}
 .mrss-article-meta{display:flex;flex-wrap:wrap;align-items:center;gap:5px 8px;font-size:.76em;color:var(--mrss-muted)}
 .mrss-article-meta>span,.mrss-article-meta>button{display:inline-flex;align-items:center;gap:5px;min-width:0}
 .mrss-meta-favicon{width:14px;height:14px;border-radius:4px;object-fit:cover;flex:none;filter:grayscale(1);opacity:.8}
@@ -3267,19 +3270,23 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         }
         if (!confirmed) return
         setBusy('markAll')
-        const result = await callApi('/manage', {
-          method: 'POST',
-          body: { action: 'mark_all_read', scope: target, id: scope.id },
-        })
-        setBusy('')
-        if (!result.ok) {
-          notify(`${t('status.actionFailed')}: ${result.error.message}`)
-          return
+        try {
+          const result = await callApi('/manage', {
+            method: 'POST',
+            body: { action: 'mark_all_read', scope: target, id: scope.id },
+          })
+          if (!result.ok) {
+            notify(`${t('status.actionFailed')}: ${result.error.message}`)
+            return
+          }
+          notify(t('list.markedAll'))
+          PANEL_CACHE.entriesKey = ''
+          await loadBootstrap()
+          await loadEntries()
+        } finally {
+          // The button keeps spinning until the list it just emptied is back.
+          setBusy('')
         }
-        notify(t('list.markedAll'))
-        PANEL_CACHE.entriesKey = ''
-        await loadBootstrap()
-        await loadEntries()
       }, [filter, loadBootstrap, loadEntries, notify, scope, t])
 
       const currentIndex = useMemo(
@@ -4208,7 +4215,9 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
               disabled: filter === 'starred' || busy === 'markAll',
               'aria-label': markAllLabel,
               onClick: () => { void markAllRead() },
-            }, h(Icon, { name: 'check', className: busy === 'markAll' ? 'mrss-icon mrss-spin' : 'mrss-icon' })),
+            }, busy === 'markAll'
+              ? h('span', { className: 'mrss-spinner', 'aria-hidden': 'true' })
+              : h(Icon, { name: 'check', className: 'mrss-icon' })),
           ),
           h('button', {
             className: 'mrss-btn', 'data-icon': 'true', 'data-variant': 'ghost', type: 'button',
@@ -4450,7 +4459,17 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
                   articleTitle.kicker
                     ? h('div', { className: 'mrss-article-kicker' }, articleTitle.kicker)
                     : null,
-                  h('h1', { className: 'mrss-article-title' }, articleTitle.title),
+                  h('h1', { className: 'mrss-article-title' },
+                    article.item.url
+                      ? h('a', {
+                        className: 'mrss-article-title-link',
+                        href: article.item.url,
+                        target: '_blank',
+                        rel: 'noreferrer',
+                        title: t('reader.original'),
+                        'aria-label': `${articleTitle.title} — ${t('reader.original')}`,
+                      }, articleTitle.title)
+                      : articleTitle.title),
                   h('div', { className: 'mrss-article-meta' },
                     prefs.showFavicon && article.item.feedId
                       ? h(FeedIcon, {

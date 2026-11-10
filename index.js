@@ -21,7 +21,7 @@ import {
 import { tweetFromSyndication } from './lib/tweet.js'
 import { createCache } from './lib/cache.js'
 
-const VERSION = '1.6.0'
+const VERSION = '1.6.1'
 const PREFIX = '/rss-miniflux/api'
 const CREDENTIAL_KEY = 'rss-miniflux'
 const META_TTL = 60_000

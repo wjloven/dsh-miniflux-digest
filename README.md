@@ -29,6 +29,7 @@ Bring your Miniflux subscriptions directly into DeepSeek Harness. Miniflux Diges
 - **Instant state restoration:** Remembers your active feed, article, and exact scroll position. Thanks to local state caching, reopening the panel displays content instantly without layout shifts or cold-start blanks.
 - **Instant after the first open:** Articles you have already read and categories you have already visited come straight from memory. Resting the pointer on a row, or simply reading on with `j` / `k`, puts the next article in flight before you click it. The first open still waits once for Miniflux; after that a click is effectively immediate.
 - **Synchronized triage filters:** Switching between Starred, Unread, and All states simultaneously updates both feed badges and the article queue.
+- **The title is the link:** clicking the article title opens the original page in your browser, and the toolbar keeps the same action (also on `v`).
 - **Embedded media playback:** Plays video embeds from YouTube, Bilibili, and X (Twitter) natively within the reader.
 - **Keyboard-driven workflow:** Navigate articles and manage state effortlessly using standard reader keys (`j` / `k` to move, `m` to toggle read, `s` to star, `c` to copy clean Markdown, `v` to visit the original web page).
 - **Deep assistant integration:** Built-in tools allow your AI agent to query unread statistics, summarize whole categories, or parse article content using the same account and read states.
@@ -140,6 +141,7 @@ All feed names, article headlines, and sample articles in `preview/data.mjs` and
 - **阅读状态秒级恢复**：自动记忆上次聚焦的分类、阅读文章与精确滚动位置。基于轻量本地快照机制，再次打开面板立即可见内容，无白屏加载与布局跳动。
 - **第二次打开起基本不用等**：读过的文章、逛过的分类直接来自内存；鼠标在列表行上停一下、或用 `j` / `k` 读下去时，下一篇已经在路上。第一次打开仍需等一次 Miniflux。
 - **分类与列表实时联动**：星标、未读、全部等筛选维度在左侧源列表与中间文章列表间保持双向同步。
+- **点标题就能看原文**：正文标题本身是链接，点一下在浏览器打开原页面；工具栏保留同一个动作（`v` 键等效）。
 - **多媒体原生内嵌**：文章中引用的 YouTube、Bilibili 及 X（Twitter）视频直接在阅读区原地嵌入播放，无需跳转第三方网站。
 - **全键盘快捷键流**：遵循经典阅读器习惯，支持 `j` / `k` 上下移动、`m` 标记已读、`s` 收藏星标、`c` 一键复制整洁 Markdown、`v` 访问原文。
 - **智能体深度联动**：内置 6 项原子助手工具，与侧栏共用同一账号会话与已读状态，让模型随时为你生成未读速览、专题汇总或抓取全文。
