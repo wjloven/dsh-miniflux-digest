@@ -21,7 +21,7 @@ import {
 import { tweetFromSyndication } from './lib/tweet.js'
 import { createCache } from './lib/cache.js'
 
-const VERSION = '1.6.3'
+const VERSION = '1.6.4'
 const PREFIX = '/rss-miniflux/api'
 const CREDENTIAL_KEY = 'rss-miniflux'
 const META_TTL = 60_000
@@ -544,6 +544,32 @@ export function apply(ctx, config = {}) {
     }
   }
 
+  /**
+   * Move one feed's unread count instead of dropping the counters cache.
+   * Expiring it forced the next bootstrap to refetch counters; when that call
+   * hiccuped the payload read as "0 unread everywhere" and the unread-filtered
+   * sidebar came back empty.
+   */
+  function patchCounters(feedId, delta) {
+    const id = Number(feedId)
+    if (!id || !delta) return false
+    const touched = cache.patch(['counters'], (value) => {
+      if (!value || typeof value !== 'object') return undefined
+      const unreads = { ...(value.unreads || {}) }
+      const key = String(id)
+      const current = Number(unreads[key]) || 0
+      const next = Math.max(0, current + delta)
+      if (next === current) return undefined
+      unreads[key] = next
+      return {
+        ...value,
+        unreads,
+        total: Math.max(0, (Number(value.total) || 0) + delta),
+      }
+    })
+    return touched > 0
+  }
+
   function articlePayload(raw) {
     const content = String(raw.content || '')
     const baseUrl = raw.url || ''
@@ -1051,6 +1077,40 @@ export function apply(ctx, config = {}) {
     }
   }
 
+  /**
+   * The last catalog that came back complete.
+   *
+   * A write expires the caches right before the next bootstrap, which is
+   * exactly when four Miniflux calls go out together. One of them failing used
+   * to answer `{feeds: [], categories: []}` with HTTP 200, and the panel
+   * replaced the whole sidebar with nothing — the "all subscriptions went
+   * empty after marking something read" report. A degraded answer now keeps
+   * what we already knew and says so.
+   */
+  let lastCatalog = null
+
+  const shapeCategory = (category) => ({
+    id: Number(category.id),
+    title: String(category.title || ''),
+    totalUnread: Number(category.total_unread) || 0,
+    feedCount: Number(category.feed_count) || 0,
+  })
+
+  function shapeFeed(feed, counters) {
+    return {
+      id: Number(feed.id),
+      title: String(feed.title || ''),
+      // The edit dialog shows the address Miniflux polls, so the sidebar
+      // payload carries it; a Host half without it makes the dialog ask.
+      feedUrl: String(feed.feed_url || ''),
+      categoryId: Number(feed.category?.id) || 0,
+      categoryTitle: String(feed.category?.title || ''),
+      unread: Number(counters?.unreads?.[String(feed.id)] ?? counters?.unreads?.[feed.id]) || 0,
+      disabled: Boolean(feed.disabled),
+      lastError: String(feed.parsing_error_message || ''),
+    }
+  }
+
   async function bootstrap(demoRequested) {
     const settings = await resolveSettings()
     const demo = wantsDemo(demoRequested) || !settings.configured
@@ -1071,12 +1131,34 @@ export function apply(ctx, config = {}) {
     }
     try {
       const client = await miniflux()
-      const [categories, feeds, counters, me] = await Promise.all([
+      // allSettled, not all: one slow endpoint must not throw away the three
+      // answers that did arrive.
+      const settled = await Promise.allSettled([
         cacheRunSWR('categories', META_TTL, META_STALE_TTL, () => client.categories({ counts: true })),
         cacheRunSWR('feeds', META_TTL, META_STALE_TTL, () => client.feeds()),
-        cacheRunSWR('counters', LIST_TTL, META_STALE_TTL, () => client.counters()),
+        // `client.counters()` swallows its own failures and returns null, which
+        // a cache would then hold for the whole TTL as "0 unread everywhere".
+        // Surface it as a *soft* failure instead: no counters, no cached null,
+        // and the caller falls back to the numbers already on screen.
+        cacheRunSWR('counters', LIST_TTL, META_STALE_TTL, async () => {
+          const counts = await client.counters()
+          if (!counts) throw new MinifluxError('Feed counters are unavailable', { code: 'no_counters' })
+          return counts
+        }),
         cacheRunSWR('me', 5 * 60_000, META_STALE_TTL, () => client.me()),
       ])
+      const value = (index) => (settled[index].status === 'fulfilled' ? settled[index].value : null)
+      const failures = settled
+        .filter((result) => result.status === 'rejected')
+        // Missing counters are not a broken catalog: the panel keeps the numbers
+        // it already shows rather than reporting an error it cannot act on.
+        .filter((result) => !(result.reason?.code === 'no_counters'))
+        .map((result) => messageOf(result.reason))
+      const categories = value(0)
+      const feeds = value(1)
+      const counters = value(2)
+      const me = value(3)
+
       if (settings.accountId && me?.username && me.username !== settings.username) {
         try {
           await writeAccount(settings.accountId, { baseUrl: settings.baseUrl, token: settings.token, username: me.username })
@@ -1092,34 +1174,55 @@ export function apply(ctx, config = {}) {
           // a display label is not worth failing the panel over
         }
       }
+
+      // Counters are the one payload whose absence reads as "every feed has 0
+      // unread", which hides the entire sidebar in the Unread filter. Prefer
+      // the numbers already on screen over a lie.
+      const effectiveCounters = counters ?? lastCatalog?.counters ?? null
+      const shapedFeeds = feeds
+        ? feeds.map((feed) => shapeFeed(feed, effectiveCounters))
+          .sort((a, b) => b.unread - a.unread || a.title.localeCompare(b.title))
+        : (lastCatalog?.feeds || [])
+      const shapedCategories = categories ? categories.map(shapeCategory) : (lastCatalog?.categories || [])
+
+      if (failures.length > 0 && shapedFeeds.length === 0) {
+        // Nothing fresh and nothing remembered: say so instead of pretending
+        // the account has no subscriptions.
+        ctx.logger?.warn?.(`rss-miniflux: bootstrap unavailable: ${failures.join('; ')}`)
+        return {
+          status: { ...status, error: failures.join('; '), stale: true },
+          categories: shapedCategories,
+          feeds: [],
+          counters: effectiveCounters,
+          unavailable: true,
+        }
+      }
+      if (failures.length === 0) {
+        lastCatalog = { feeds: shapedFeeds, categories: shapedCategories, counters: effectiveCounters }
+      } else {
+        ctx.logger?.warn?.(`rss-miniflux: bootstrap degraded: ${failures.join('; ')}`)
+      }
+
       return {
-        status: { ...status, user: me?.username || '', username: me?.username || settings.username || '' },
-        categories: (categories || []).map((category) => ({
-          id: Number(category.id),
-          title: String(category.title || ''),
-          totalUnread: Number(category.total_unread) || 0,
-          feedCount: Number(category.feed_count) || 0,
-        })),
-        feeds: (feeds || []).map((feed) => ({
-          id: Number(feed.id),
-          title: String(feed.title || ''),
-          // The edit dialog shows the address Miniflux polls, so the sidebar
-          // payload carries it; a Host half without it makes the dialog ask.
-          feedUrl: String(feed.feed_url || ''),
-          categoryId: Number(feed.category?.id) || 0,
-          categoryTitle: String(feed.category?.title || ''),
-          unread: Number(counters?.unreads?.[String(feed.id)] ?? counters?.unreads?.[feed.id]) || 0,
-          disabled: Boolean(feed.disabled),
-          lastError: String(feed.parsing_error_message || ''),
-        })).sort((a, b) => b.unread - a.unread || a.title.localeCompare(b.title)),
-        counters,
+        status: {
+          ...status,
+          user: me?.username || '',
+          username: me?.username || settings.username || '',
+          countersUnknown: !effectiveCounters,
+          ...(failures.length > 0 ? { error: failures.join('; '), stale: true } : {}),
+        },
+        categories: shapedCategories,
+        feeds: shapedFeeds,
+        counters: effectiveCounters,
       }
     } catch (error) {
+      ctx.logger?.warn?.(`rss-miniflux: bootstrap failed: ${messageOf(error)}`)
       return {
-        status: { ...status, error: messageOf(error) },
-        categories: [],
-        feeds: [],
-        counters: null,
+        status: { ...status, error: messageOf(error), stale: true },
+        categories: lastCatalog?.categories || [],
+        feeds: lastCatalog?.feeds || [],
+        counters: lastCatalog?.counters || null,
+        unavailable: !lastCatalog,
       }
     }
   }
@@ -1232,6 +1335,14 @@ export function apply(ctx, config = {}) {
       if (method === 'GET' && route === '/bootstrap') {
         const started = Date.now()
         const payload = await bootstrap(url.searchParams.get('demo'))
+        if (payload.unavailable) {
+          // Keep the panel's last good catalog instead of handing it an empty one.
+          return json(
+            { error: { code: 'upstream_unavailable', message: payload.status?.error || 'Miniflux is unreachable' } },
+            502,
+            { 'server-timing': `bootstrap;dur=${Date.now() - started}` },
+          )
+        }
         // Visible in devtools and curl: how long the Host took to answer.
         return json(payload, 200, { 'server-timing': `bootstrap;dur=${Date.now() - started}` })
       }
@@ -1409,12 +1520,14 @@ export function apply(ctx, config = {}) {
         // One row changed: patch it into every cached page and article, keep the
         // pages themselves. Counters are cheap to refetch, entries are not.
         patchEntryRows(id, { status: 'read' })
-        expire(['counters', 'feed-stats'])
+        if (!patchCounters(body.feedId, -1)) expire(['counters'])
+        expire(['feed-stats'])
         return { ok: true, action }
       case 'mark_unread':
         await client.markRead(id, 'unread')
         patchEntryRows(id, { status: 'unread' })
-        expire(['counters', 'feed-stats'])
+        if (!patchCounters(body.feedId, 1)) expire(['counters'])
+        expire(['feed-stats'])
         return { ok: true, action }
       case 'mark_read_many':
         if (Array.isArray(body.ids) && body.ids.length > 0 && body.ids.length <= 200) {

@@ -49,6 +49,8 @@ const entries = [
   },
 ]
 
+const failures = new Set()
+
 const fake = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1')
   const reply = (status, body) => {
@@ -60,6 +62,7 @@ const fake = http.createServer((req, res) => {
   if (req.headers['x-auth-token'] !== TOKEN) return reply(401, { error_message: 'bad token' })
   const key = `${req.method} ${url.pathname}`
   upstream.push(key)
+  if (failures.has(url.pathname)) return reply(500, { error_message: 'upstream exploded' })
   if (url.pathname === '/v1/me') return reply(200, { id: 1, username: 'tester' })
   if (url.pathname === '/v1/categories') {
     return reply(200, [{ id: 7, title: 'Tech', total_unread: 1, feed_count: 1 }, { id: 8, title: 'Product', total_unread: 1, feed_count: 1 }])
@@ -196,6 +199,19 @@ async function main() {
     return { status: res.status, body: JSON.parse(res.body || '{}') }
   }
 
+  // 0. Nothing cached yet and the upstream is down: the Host must say so
+  //    (502) instead of answering 200 with an empty catalog, which is what
+  //    emptied the sidebar in the field.
+  for (const path of ['/v1/feeds', '/v1/categories', '/v1/feeds/counters', '/v1/me']) failures.add(path)
+  const broken = await get('/rss-miniflux/api/bootstrap')
+  assert.equal(broken.status, 502, 'a cold bootstrap with a broken upstream must not be a 200')
+  assert.equal(broken.body.feeds, undefined, 'the error answer carries no feed list')
+  assert.equal(broken.body.error?.code, 'upstream_unavailable', 'the client can tell this apart from a real empty account')
+  assert.match(String(broken.body.error?.message || ''), /upstream exploded|Miniflux/, 'the error is explained')
+  failures.clear()
+  // The failed attempt is not what the rest of the file is counting.
+  upstream.length = 0
+
   // 1. Cold bootstrap: four upstream calls, then a warm answer with none.
   const cold = await get('/rss-miniflux/api/bootstrap')
   assert.equal(cold.status, 200)
@@ -293,7 +309,50 @@ async function main() {
   const missing = await reader(new Request('http://127.0.0.1/rss-miniflux/api/icon?id=43'), { principal: { kind: 'owner' } })
   assert.equal(missing.status, 204, 'a feed without an icon answers 204')
 
-  // 5. A full refresh is allowed to drop everything.
+  // 5. A write patches the counters it changed, so the next bootstrap does not
+  //    have to refetch them (that refetch is what used to fail and blank the
+  //    sidebar).
+  const warmAgain = await get('/rss-miniflux/api/bootstrap')
+  assert.equal(warmAgain.status, 200)
+  const countersBefore = Number(warmAgain.body.counters.unreads['43'])
+  const beforeCounterWrite = upstream.length
+  await post('/rss-miniflux/api/action', { action: 'mark_read', id: 102, feedId: 43 })
+  const afterCounterWrite = await get('/rss-miniflux/api/bootstrap')
+  assert.equal(upstream.length, beforeCounterWrite + 1, 'only the write itself goes upstream, not the counters')
+  assert.equal(
+    Number(afterCounterWrite.body.counters.unreads['43']),
+    Math.max(0, countersBefore - 1),
+    'the patched counters follow the write',
+  )
+
+  // 6. Degraded bootstrap: one upstream call failing must not empty the panel.
+  //    This is the reported symptom — mark something read, then the whole
+  //    subscription list came back empty.
+  failures.add('/v1/feeds')
+  await post('/rss-miniflux/api/action', { action: 'refresh' }) // invalidate, like any write
+  const degraded = await get('/rss-miniflux/api/bootstrap')
+  assert.equal(degraded.status, 200, 'a partly available catalog is still an answer')
+  assert.equal(degraded.body.feeds.length, 2, 'the feeds we already knew survive a failing endpoint')
+  assert.equal(degraded.body.categories.length, 2, 'so do the categories')
+  assert.match(String(degraded.body.status.error || ''), /exploded|Miniflux/, 'the answer says it is degraded')
+  assert.equal(degraded.body.status.stale, true, 'the panel can tell it is a stale catalog')
+  failures.delete('/v1/feeds')
+
+  // 7. Missing counters are a soft failure: keep the numbers, do not report an
+  //    error the panel cannot act on.
+  await get('/rss-miniflux/api/bootstrap') // restore a full catalog
+  failures.add('/v1/feeds/counters')
+  await post('/rss-miniflux/api/action', { action: 'refresh' })
+  const noCounters = await get('/rss-miniflux/api/bootstrap')
+  assert.equal(noCounters.status, 200)
+  assert.equal(noCounters.body.feeds.length, 2, 'feeds survive a counters failure')
+  const unreadAfter = noCounters.body.feeds.reduce((sum, feed) => sum + feed.unread, 0)
+  assert.ok(unreadAfter > 0, `counters must fall back to the last known numbers, saw ${unreadAfter} unread`)
+  assert.equal(noCounters.body.status.error, undefined, 'a counters hiccup is not an error the panel shows')
+  assert.equal(noCounters.body.status.countersUnknown, false, 'the fallback means the counts are still known')
+  failures.delete('/v1/feeds/counters')
+
+  // 8. A full refresh is allowed to drop everything.
   await post('/rss-miniflux/api/action', { action: 'refresh' })
   const beforeRefresh = upstream.length
   await get('/rss-miniflux/api/bootstrap')

@@ -2562,6 +2562,8 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
 
     function Panel() {
       const [boot, setBoot] = useState(PANEL_CACHE.boot)
+      // The latest adopted catalog, readable from callbacks that never re-bind.
+      const bootRef = useRef(PANEL_CACHE.boot)
       const [entries, setEntries] = useState(PANEL_CACHE.entries)
       const [listInfo, setListInfo] = useState(PANEL_CACHE.listInfo)
       const [filter, setFilter] = useState(PANEL_CACHE.filter)
@@ -2752,6 +2754,8 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         entriesRef.current = entries
       }, [entries])
 
+      useEffect(() => { bootRef.current = boot }, [boot])
+
       // Mirror the view state outside the component so a panel switch keeps
       // the reading position and filters.
       useEffect(() => {
@@ -2792,24 +2796,68 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
           if (!silent) setError(result.error)
           return null
         }
-        setBoot(result.data)
+        // A degraded answer (one upstream call failed) updates what it fetched
+        // and keeps the rest; it never blanks the sidebar.
+        const merged = mergeBootstrap(bootRef.current, result.data)
+        bootRef.current = merged
+        setBoot(merged)
         setLastSync(Date.now())
-        if (result.data.status?.error) {
-          if (!silent) setError({ code: 'bootstrap', message: result.data.status.error })
+        if (merged.status?.error) {
+          if (!silent) setError({ code: 'bootstrap', message: merged.status.error })
         } else {
           setError((current) => (current?.code === 'bootstrap' ? null : current))
         }
-        if (!result.data.status?.configured && !firstBootRef.current) {
+        if (!merged.status?.configured && !firstBootRef.current) {
           setAccountsFocus('add')
           setShowAccounts(true)
         }
         firstBootRef.current = true
-        persistSnapshot({ boot: result.data })
-        return result.data
+        persistSnapshot({ boot: merged })
+        return merged
       }, [])
 
       /** True when two list pages carry the same rows in the same state. */
-      function sameList(left, right) {
+      /**
+     * Fold a bootstrap answer into what is already on screen.
+     *
+     * The Host marks a degraded answer with `status.error` (one Miniflux call
+     * failed while the others answered). Such an answer may arrive with empty
+     * arrays or without counters, and applying it verbatim is what blanked the
+     * subscription sidebar right after a read write: four upstream calls go out
+     * together once the caches are expired, and any one of them failing was
+     * enough to replace the whole catalog with nothing.
+     *
+     * A degraded answer may update what it actually fetched; it may not delete a
+     * catalog we already have.
+     */
+    function mergeBootstrap(current, incoming) {
+      if (!incoming || !incoming.status) return current
+      if (!current || !current.status) return incoming
+      const degraded = Boolean(incoming.status.error)
+      const counters = incoming.counters ?? current.counters ?? null
+      const prevFeeds = new Map((current.feeds || []).map((feed) => [feed.id, feed]))
+      const incomingFeeds = Array.isArray(incoming.feeds) ? incoming.feeds : []
+      const feeds = incomingFeeds.map((feed) => {
+        const prev = prevFeeds.get(feed.id)
+        // Without counters every row reads as 0 unread, which hides all of them
+        // in the Unread filter. The numbers already on screen are closer to the
+        // truth than a zero.
+        if (!incoming.counters && prev) return { ...feed, unread: prev.unread || 0 }
+        return feed
+      })
+      const incomingCategories = Array.isArray(incoming.categories) ? incoming.categories : []
+      return {
+        ...incoming,
+        feeds: degraded && feeds.length === 0 ? (current.feeds || []) : feeds,
+        categories: degraded && incomingCategories.length === 0
+          ? (current.categories || [])
+          : incomingCategories,
+        counters,
+        status: { ...incoming.status, countersUnknown: counters == null },
+      }
+    }
+
+    function sameList(left, right) {
         if (left === right) return true
         if (!Array.isArray(left) || !Array.isArray(right)) return false
         if (left.length !== right.length) return false
@@ -2840,7 +2888,9 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
           PANEL_CACHE.listScroll = 0
           if (listRef.current) listRef.current.scrollTop = 0
           setEntries(remembered.entries)
-          setError(null)
+          // A degraded catalog keeps its own banner: the list loading fine does
+          // not mean the catalog is fresh.
+          setError((current) => (current?.code === 'bootstrap' ? current : null))
           setListInfo((current) => ({ ...current, loading: false, loadingMore: false, total: remembered.total }))
         }
         const previous = append ? entriesRef.current : []
@@ -2884,7 +2934,9 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
           // A remembered page is already on screen; only replace it when the
           // refresh actually differs, so the reader keeps its scroll position.
           if ((!silent && !remembered) || !sameList(entriesRef.current, incoming)) setEntries(incoming)
-          if (!silent) setError(null)
+          // A degraded catalog keeps its own banner: it is not fixed by the
+          // list loading fine, only by the next good bootstrap.
+          if (!silent) setError((current) => (current?.code === 'bootstrap' ? current : null))
           // Only the first page is worth persisting: a long scrolled list would
           // blow the storage budget for nothing.
           persistSnapshot({ entries: incoming, entriesKey: key, total, filter, scope })
@@ -3136,7 +3188,7 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
 
       const toggleRead = useCallback(async (item) => {
         const nextRead = item.status === 'unread'
-        const ok = await act(nextRead ? 'mark_read' : 'mark_unread', { id: item.id })
+        const ok = await act(nextRead ? 'mark_read' : 'mark_unread', { id: item.id, feedId: item.feedId })
         if (!ok) return
         notify(nextRead ? t('status.markedRead') : t('status.markedUnread'))
         // Keep the row in place so j/k does not jump: it dims instead of
@@ -3180,7 +3232,7 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
       }, [])
 
       const markReadInPlace = useCallback(async (item) => {
-        const ok = await act('mark_read', { id: item.id })
+        const ok = await act('mark_read', { id: item.id, feedId: item.feedId })
         if (!ok) return
         if (item.status === 'unread') adjustFeedUnread(item.feedId, -1)
         setEntries((current) => current.map((entry) => (entry.id === item.id ? { ...entry, status: 'read' } : entry)))
@@ -3823,7 +3875,9 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         // whole thing rather than leaving it clustered by category.
         : feedGroups.flatMap((group) => group.feeds).slice().sort(compareFeeds(prefs.feedSort))
       const visibleSidebarFeeds = sidebarFeeds.filter((feed) => {
-        if (filter === 'unread') return prefs.showHiddenFeeds || (feed.unread || 0) > 0
+        // Unknown counts look like "0 unread everywhere"; showing every
+        // subscription beats an empty sidebar while the upstream recovers.
+        if (filter === 'unread') return boot?.status?.countersUnknown || prefs.showHiddenFeeds || (feed.unread || 0) > 0
         if (filter === 'starred') return !feedStats || starredCount(feed.id) > 0
         return true
       })
