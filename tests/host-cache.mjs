@@ -113,6 +113,7 @@ const fake = http.createServer((req, res) => {
     return reply(204, {})
   }
   if (url.pathname === '/v1/entries/stats') return reply(200, {})
+  if (/^\/v1\/(feeds|users)\/\d+\/mark-all-as-read$/.test(url.pathname)) return reply(204, {})
   if (/^\/v1\/entries\/\d+$/.test(url.pathname)) {
     const id = Number(url.pathname.split('/')[3])
     const entry = entries.find((candidate) => candidate.id === id)
@@ -185,6 +186,8 @@ async function main() {
   const reader = resourceRoutes[0].resource
   const action = exactRoutes.get('/rss-miniflux/api/action')
   assert.ok(action, 'the write action route must be registered')
+  const manage = exactRoutes.get('/rss-miniflux/api/manage')
+  assert.ok(manage, 'the management route must be registered')
 
   const get = async (path) => {
     const started = Date.now()
@@ -324,6 +327,21 @@ async function main() {
     Math.max(0, countersBefore - 1),
     'the patched counters follow the write',
   )
+
+  // 5c. Mark all as read only moves counts: the catalog has to survive, or the
+  //     panel waits for four upstream calls after a write that already landed.
+  await get('/rss-miniflux/api/bootstrap')
+  const beforeBulk = upstream.length
+  const bulkRes = fakeNodeResponse()
+  await manage.handler(fakeNodeRequest('POST', { action: 'mark_all_read', scope: 'all' }), bulkRes)
+  assert.equal(bulkRes.status, 200, 'mark_all_read should succeed')
+  const afterBulk = await get('/rss-miniflux/api/bootstrap')
+  const bulkCalls = upstream.slice(beforeBulk)
+  assert.ok(
+    bulkCalls.every((call) => !/\/v1\/(feeds|categories|me)$/.test(call)),
+    `a bulk read must not refetch the catalog, saw ${bulkCalls.join(', ')}`,
+  )
+  assert.equal(afterBulk.body.feeds.length, 2, 'the subscriptions are still there')
 
   // 6. Degraded bootstrap: one upstream call failing must not empty the panel.
   //    This is the reported symptom — mark something read, then the whole

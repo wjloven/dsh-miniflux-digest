@@ -702,6 +702,43 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * The local copy of "mark every entry in this scope read": rows leave the
+     * unread-filtered pages, the rest keep their place with a read state, and
+     * remembered article headers follow.
+     */
+    function patchCachedScope({ kind, id }) {
+      const scopeId = Number(id)
+      const inScope = (entry) => kind === 'all'
+        || (kind === 'feed'
+          ? Number(entry.feedId) === scopeId
+          : Number(entry.categoryId) === scopeId)
+      for (const [key, page] of PANEL_CACHE.pages) {
+        const drop = key.startsWith('unread|')
+        let touched = false
+        const rows = page.entries
+          .map((entry) => {
+            if (!inScope(entry)) return entry
+            touched = true
+            return { ...entry, status: 'read' }
+          })
+          .filter((entry) => !(drop && inScope(entry)))
+        if (!touched) continue
+        PANEL_CACHE.pages.set(key, {
+          ...page,
+          entries: rows,
+          total: drop ? Math.max(0, page.total - (page.entries.length - rows.length)) : page.total,
+        })
+      }
+      for (const [key, hit] of PANEL_CACHE.articles) {
+        if (!inScope(hit.article?.item || {})) continue
+        PANEL_CACHE.articles.set(key, {
+          ...hit,
+          article: { ...hit.article, item: { ...hit.article.item, status: 'read' } },
+        })
+      }
+    }
+
     /** Patch the open article and every remembered copy of it. */
     function patchCachedArticle(id, changes) {
       const numeric = Number(id)
@@ -3355,6 +3392,45 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         return () => cancelIdle(handle)
       }, [selectedId, visibleEntries])
 
+      /** Clear the unread state of the current scope locally, before the refetch. */
+      const applyMarkedScope = useCallback(() => {
+        const kind = scope.kind
+        const id = scope.id
+        const inScopeEntry = (entry) => kind === 'all'
+          || (kind === 'feed' ? entry.feedId === id : entry.categoryId === id)
+        const inScopeFeed = (feed) => kind === 'all'
+          || (kind === 'feed' ? feed.id === id : feed.categoryId === id)
+        setBoot((current) => {
+          if (!current) return current
+          const feeds = current.feeds || []
+          const selectedFeed = kind === 'feed' ? feeds.find((feed) => feed.id === id) || null : null
+          const nextFeeds = feeds.map((feed) => (inScopeFeed(feed) && feed.unread
+            ? { ...feed, unread: 0 }
+            : feed))
+          const categories = (current.categories || []).map((category) => {
+            if (!category.totalUnread) return category
+            if (kind === 'all' || (kind === 'category' && category.id === id)) {
+              return { ...category, totalUnread: 0 }
+            }
+            // One feed of this category was cleared: take its share off.
+            if (selectedFeed && selectedFeed.categoryId === category.id) {
+              return { ...category, totalUnread: Math.max(0, category.totalUnread - (selectedFeed.unread || 0)) }
+            }
+            return category
+          })
+          return { ...current, feeds: nextFeeds, categories }
+        })
+        setEntries((current) => {
+          if (filter === 'unread') return current.filter((entry) => !inScopeEntry(entry))
+          return current.map((entry) => (inScopeEntry(entry) ? { ...entry, status: 'read' } : entry))
+        })
+        setArticle((current) => (current && inScopeEntry(current.item)
+          ? { ...current, item: { ...current.item, status: 'read' } }
+          : current))
+        setStarredEpoch((value) => value + 1)
+        patchCachedScope({ kind, id })
+      }, [filter, scope])
+
       const markAllRead = useCallback(async () => {
         // Starred is a saved-items view, not an unread queue: the list header
         // greys the action out there instead of marking saved entries read.
@@ -3369,24 +3445,30 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         }
         if (!confirmed) return
         setBusy('markAll')
+        let result = null
         try {
-          const result = await callApi('/manage', {
+          result = await callApi('/manage', {
             method: 'POST',
             body: { action: 'mark_all_read', scope: target, id: scope.id },
           })
-          if (!result.ok) {
-            notify(`${t('status.actionFailed')}: ${result.error.message}`)
-            return
-          }
-          notify(t('list.markedAll'))
-          PANEL_CACHE.entriesKey = ''
-          await loadBootstrap()
-          await loadEntries()
         } finally {
-          // The button keeps spinning until the list it just emptied is back.
+          // The write is over: the button stops now. Marking a large account
+          // read takes seconds on Miniflux, and the panel used to keep the icon
+          // turning through the refresh that followed — "Marked all as read"
+          // next to a spinner that would not stop.
           setBusy('')
         }
-      }, [filter, loadBootstrap, loadEntries, notify, scope, t])
+        if (!result?.ok) {
+          notify(`${t('status.actionFailed')}: ${result?.error?.message || t('error.title')}`)
+          return
+        }
+        notify(t('list.markedAll'))
+        // Show the result from what we know, then let the refresh confirm it.
+        applyMarkedScope()
+        PANEL_CACHE.entriesKey = ''
+        void loadBootstrap()
+        await loadEntries({ silent: true })
+      }, [applyMarkedScope, filter, loadBootstrap, loadEntries, notify, scope, t])
 
       const currentIndex = useMemo(
         () => visibleEntries.findIndex((entry) => entry.id === selectedId),

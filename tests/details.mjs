@@ -28,6 +28,8 @@ const DELAY = Number(arg('delay', 600))
 const PORT = Number(arg('port', 5605))
 const CHROME = arg('chromium', '/Applications/Chromium.app/Contents/MacOS/Chromium')
 const DEBUG_PORT = Number(arg('debugPort', 9335))
+/** Fake latency for the bulk write, shorter than `--delay` on purpose. */
+const MANAGE_DELAY = Number(arg('manageDelay', 300))
 const URL_BASE = `http://127.0.0.1:${PORT}/`
 
 if (!fs.existsSync(CHROME)) {
@@ -136,6 +138,23 @@ async function run() {
       return result.result?.value
     }
 
+    // A bulk write takes seconds on a real Miniflux; the preview answers at
+    // once. Slow just this route down so the busy state is observable, and keep
+    // it shorter than the entries delay so "stopped with the write" and
+    // "stopped with the refresh" stay distinguishable.
+    await client.send('Page.addScriptToEvaluateOnNewDocument', {
+      source: `(() => {
+        const original = window.fetch
+        window.fetch = async (input, init) => {
+          const url = String(typeof input === 'string' ? input : (input && input.url) || '')
+          if (url.includes('/rss-miniflux/api/manage')) {
+            await new Promise((resolve) => setTimeout(resolve, ${MANAGE_DELAY}))
+          }
+          return original(input, init)
+        }
+      })()`,
+    })
+
     await client.send('Page.navigate', { url: URL_BASE })
     const until = Date.now() + 20_000
     while (Date.now() < until) {
@@ -183,37 +202,54 @@ async function run() {
     assert.equal(title.cursor, 'pointer', 'the title should look clickable')
     assert.equal(title.decoration, 'none', 'the title should not be underlined at rest')
 
-    // 2. Mark all as read: spinner while it works, checkmark when it is done.
+    // 2. Mark all as read: the button spins while the write runs and stops as
+    //    soon as it lands — not after the refresh it triggers. The success toast
+    //    used to appear with the icon still turning.
     const markAll = await evaluate(`(async () => {
       window.confirm = () => true
       const button = document.querySelector('.mrss-markall')
       if (!button) return { missing: true }
+      const started = performance.now()
       button.click()
       await new Promise((resolve) => setTimeout(resolve, 120))
-      const busy = {
+      const during = {
         spinner: Boolean(button.querySelector('.mrss-spinner')),
         icon: Boolean(button.querySelector('svg')),
         disabled: button.disabled,
       }
-      const until = Date.now() + 15_000
-      while (Date.now() < until) {
-        if (!button.querySelector('.mrss-spinner')) break
-        await new Promise((resolve) => setTimeout(resolve, 60))
-      }
-      const settled = {
+      const goneMs = await new Promise((resolve) => {
+        const tick = () => {
+          if (!button.querySelector('.mrss-spinner')) return resolve(Math.round(performance.now() - started))
+          if (performance.now() - started > 15_000) return resolve(-1)
+          setTimeout(tick, 20)
+        }
+        tick()
+      })
+      const after = {
         spinner: Boolean(button.querySelector('.mrss-spinner')),
         icon: Boolean(button.querySelector('svg')),
         disabled: button.disabled,
+        rows: document.querySelectorAll('.mrss-item').length,
       }
-      return { busy, settled }
+      await new Promise((resolve) => setTimeout(resolve, ${DELAY} + 900))
+      return {
+        during,
+        goneMs,
+        after,
+        settled: { disabled: button.disabled, spinner: Boolean(button.querySelector('.mrss-spinner')) },
+      }
     })()`)
 
     assert.ok(!markAll.missing, 'the Mark all as read button is missing')
-    assert.equal(markAll.busy.spinner, true, 'Mark all as read must show a spinner while it runs')
-    assert.equal(markAll.busy.icon, false, 'the checkmark glyph must not be rotated as a spinner')
-    assert.equal(markAll.busy.disabled, true, 'the button must be disabled while the write is in flight')
-    assert.equal(markAll.settled.spinner, false, 'the spinner must go away when the write settles')
-    assert.equal(markAll.settled.icon, true, 'the checkmark must come back after the write')
+    assert.equal(markAll.during.spinner, true, 'Mark all as read must show a spinner while the write runs')
+    assert.equal(markAll.during.icon, false, 'the checkmark glyph must not be rotated as a spinner')
+    assert.equal(markAll.during.disabled, true, 'the button must be disabled while the write is in flight')
+    assert.ok(
+      markAll.goneMs >= MANAGE_DELAY - 40 && markAll.goneMs < MANAGE_DELAY + (DELAY * 0.6),
+      `the spinner stopped after ${markAll.goneMs}ms; the write takes ~${MANAGE_DELAY}ms and the refresh ~${DELAY * 2}ms`,
+    )
+    assert.equal(markAll.after.spinner, false, 'the spinner must be gone once the write is done')
+    assert.equal(markAll.after.rows, 0, 'the unread list should be empty right after a successful mark-all')
     assert.equal(markAll.settled.disabled, false, 'the button must be usable again')
 
     // 3. A fetched original page keeps its `<figure><img width height>`: the
@@ -257,7 +293,7 @@ async function run() {
 
     assert.deepEqual(client.problems, [], `page errors: ${client.problems.join(' | ')}`)
     console.log('[details] title:', JSON.stringify({ href: title.href, target: title.target, tooltip: title.tooltip }))
-    console.log('[details] mark-all:', JSON.stringify(markAll))
+    console.log('[details] mark-all:', JSON.stringify({ during: markAll.during, goneMs: markAll.goneMs, after: markAll.after }))
     console.log('[details] figure:', JSON.stringify(figure))
     client.close()
   } finally {

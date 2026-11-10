@@ -21,7 +21,7 @@ import {
 import { tweetFromSyndication } from './lib/tweet.js'
 import { createCache } from './lib/cache.js'
 
-const VERSION = '1.6.4'
+const VERSION = '1.6.5'
 const PREFIX = '/rss-miniflux/api'
 const CREDENTIAL_KEY = 'rss-miniflux'
 const META_TTL = 60_000
@@ -248,6 +248,8 @@ export function apply(ctx, config = {}) {
   }
 
   const cacheRun = (key, ttl, fn) => cache.run(key, ttl, fn)
+  /** `/v1/me` never changes within a session; a bulk read needs the id too. */
+  const cachedMe = (client) => cacheRunSWR('me', 5 * 60_000, META_STALE_TTL, () => client.me())
   const cacheRunSWR = (key, ttl, staleTtl, fn) => cache.runSWR(key, ttl, staleTtl, fn)
   const invalidate = () => cache.clear()
   const expire = (keys) => cache.expire(keys)
@@ -910,7 +912,7 @@ export function apply(ctx, config = {}) {
         return { ok: true }
       case 'feed_mark_read':
         await client.markFeedRead(body.id)
-        invalidate()
+        expire(['counters', 'feed-stats', 'entries'])
         return { ok: true }
       case 'category_add': {
         const title = String(body.title || '').trim()
@@ -935,11 +937,14 @@ export function apply(ctx, config = {}) {
         if (scope === 'feed') await client.markFeedRead(body.id)
         else if (scope === 'category') await client.markCategoryRead(body.id)
         else {
-          const me = await client.me()
+          const me = await cachedMe(client)
           if (!me?.id) throw new HttpError(502, 'no_user', 'Could not resolve the Miniflux user')
           await client.markUserRead(me.id)
         }
-        invalidate()
+        // Marking read changes counts, not the subscription list. Dropping the
+        // whole catalog made the panel wait for four upstream calls after a
+        // write that is already finished — the "success but still spinning".
+        expire(['counters', 'feed-stats', 'entries'])
         return { ok: true }
       }
       case 'import_opml': {
@@ -1145,7 +1150,7 @@ export function apply(ctx, config = {}) {
           if (!counts) throw new MinifluxError('Feed counters are unavailable', { code: 'no_counters' })
           return counts
         }),
-        cacheRunSWR('me', 5 * 60_000, META_STALE_TTL, () => client.me()),
+        cachedMe(client),
       ])
       const value = (index) => (settled[index].status === 'fulfilled' ? settled[index].value : null)
       const failures = settled
