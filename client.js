@@ -401,9 +401,99 @@ window.__ModuleLoader__.load({
       return ''
     }
 
-    function ArticleEmbed({ embed }) {
+    /**
+     * Does a request from this page carry a Referer?
+     *
+     * YouTube's embedded player requires it — without one it answers "error
+     * 153", and neither `origin=` nor `enablejsapi=1` changes that (measured).
+     * An element-level referrerpolicy overrides a `no-referrer` document, but a
+     * host shell can drop the header further down, where HTML cannot reach. The
+     * only way to know is to ask the Host what it actually received.
+     */
+    const REFERER_CACHE_KEY = 'rss-miniflux:referer:v1'
+    let refererProbe = null
+
+    function probeReferer() {
+      if (refererProbe) return refererProbe
+      try {
+        const cached = JSON.parse(sessionStorage.getItem(REFERER_CACHE_KEY) || 'null')
+        if (cached && Date.now() - Number(cached.at) < 5 * 60_000) {
+          refererProbe = Promise.resolve(Boolean(cached.ok))
+          return refererProbe
+        }
+      } catch {
+        // private mode: probe once per page load instead of once per session
+      }
+      refererProbe = callApi('/echo-referer', { referrerPolicy: 'strict-origin-when-cross-origin' })
+        .then((result) => {
+          // A failed probe proves nothing; keep the richer player.
+          const ok = result.ok ? Boolean(String(result.data?.referer || '')) : true
+          try {
+            sessionStorage.setItem(REFERER_CACHE_KEY, JSON.stringify({ at: Date.now(), ok }))
+          } catch {
+            // ignore
+          }
+          return ok
+        })
+        .catch(() => true)
+      return refererProbe
+    }
+
+    /** The page a fallback card should open. */
+    function embedPageUrl(embed) {
+      const id = String(embed?.id || '')
+      if (embed?.provider === 'youtube' && VIDEO_ID.test(id)) return `https://www.youtube.com/watch?v=${id}`
+      if (embed?.provider === 'bilibili') {
+        if (/^BV[0-9A-Za-z]+$/.test(id)) return `https://www.bilibili.com/video/${id}`
+        if (/^av\d+$/.test(id)) return `https://www.bilibili.com/video/${id}`
+      }
+      return ''
+    }
+
+    function articleEmbedFallback(embed, t) {
+      const page = embedPageUrl(embed)
+      const thumb = embed.provider === 'youtube' && VIDEO_ID.test(String(embed.id || ''))
+        ? `https://i.ytimg.com/vi/${embed.id}/hqdefault.jpg`
+        : ''
+      return h('a', {
+        className: 'mrss-embed mrss-embed--link',
+        'data-provider': embed.provider,
+        href: page || undefined,
+        target: '_blank',
+        rel: 'noreferrer',
+        title: t('embed.external'),
+        'aria-label': t('embed.external'),
+      },
+      thumb
+        ? h('img', {
+          className: 'mrss-embed-thumb',
+          src: thumb,
+          alt: '',
+          loading: 'lazy',
+          referrerPolicy: 'no-referrer',
+          onError: (event) => { event.currentTarget.style.display = 'none' },
+        })
+        : null,
+      h('span', { className: 'mrss-embed-play', 'aria-hidden': 'true' },
+        h('svg', { viewBox: '0 0 24 24', width: 26, height: 26, fill: 'currentColor' },
+          h('path', { d: 'M8 5v14l11-7z' }))),
+      h('span', { className: 'mrss-embed-hint' }, t('embed.external')),
+      )
+    }
+
+    function ArticleEmbed({ embed, t }) {
       const src = embedSource(embed)
+      // Optimistic: the player is the richer result, and only YouTube needs the
+      // Referer check. A negative answer swaps to a card that always works.
+      const [refererMissing, setRefererMissing] = useState(false)
+      useEffect(() => {
+        if (!src || embed.provider !== 'youtube') return undefined
+        let alive = true
+        probeReferer().then((ok) => { if (alive && !ok) setRefererMissing(true) })
+        return () => { alive = false }
+      }, [src, embed.provider])
       if (!src) return null
+      if (refererMissing) return articleEmbedFallback(embed, t)
       const title = embed.provider === 'youtube' ? 'YouTube video' : 'Bilibili video'
       return h('div', { className: 'mrss-embed', 'data-provider': embed.provider },
         h('iframe', {
@@ -1226,6 +1316,7 @@ window.__ModuleLoader__.load({
       'reader.pick': 'Pick an entry to start reading',
       'reader.loading': 'Opening…',
       'reader.original': 'Open in browser',
+      'embed.external': 'This window sends no page origin, so YouTube cannot play inline. Open it in your browser.',
       'reader.close': 'Close article',
       'reader.readability': 'Readability',
       'reader.fullView': 'Full view',
@@ -1544,6 +1635,7 @@ window.__ModuleLoader__.load({
       "reader.pick": "选一篇文章开始阅读",
       "reader.loading": "正在打开…",
       "reader.original": "在浏览器中打开",
+      "embed.external": "这个窗口不发送页面来源，YouTube 拒绝内嵌播放。点开在浏览器看。",
       "reader.close": "关闭文章",
       "reader.readability": "正文提取",
       "reader.fullView": "无干扰阅读",
@@ -1604,6 +1696,7 @@ window.__ModuleLoader__.load({
 
     async function callApi(path, options = {}) {
       const init = { method: options.method || 'GET', headers: {}, credentials: 'same-origin' }
+      if (options.referrerPolicy) init.referrerPolicy = options.referrerPolicy
       if (options.body !== undefined) {
         init.headers['content-type'] = 'application/json'
         init.body = JSON.stringify(options.body)
@@ -1912,6 +2005,11 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
 .mrss-embeds{display:flex;flex-direction:column;gap:14px;margin:18px 0 20px}
 .mrss-embed{position:relative;width:100%;aspect-ratio:16/9;overflow:hidden;border-radius:10px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
 .mrss-embed iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:block}
+.mrss-embed--link{display:flex;align-items:center;justify-content:center;text-decoration:none;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2);overflow:hidden}
+.mrss-embed-thumb{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.5}
+.mrss-embed-play{position:relative;display:flex;align-items:center;justify-content:center;width:56px;height:56px;border-radius:50%;background:color-mix(in srgb,var(--dsw-alias-label-primary) 84%,transparent);color:var(--dsw-alias-bg-base);transition:transform .15s ease}
+.mrss-embed--link:hover .mrss-embed-play{transform:scale(1.06)}
+.mrss-embed-hint{position:absolute;left:12px;right:12px;bottom:10px;text-align:center;font-size:11.5px;line-height:1.45;color:var(--dsw-alias-label-secondary)}
 .mrss-tweet{display:flex;flex-direction:column;gap:10px;margin:16px 0 20px}
 /* Tweet videos keep their own ratio but never take over the column: the
    height cap keeps vertical clips readable and no upscaling keeps small clips
@@ -4701,7 +4799,7 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
                         showText: article.textLength < 80,
                         bodyHasVideo: /<video[\s>]/i.test(article.html || ''),
                       })
-                      : h(ArticleEmbed, { key: `${embed.provider}:${embed.id}`, embed }))))
+                      : h(ArticleEmbed, { key: `${embed.provider}:${embed.id}`, embed, t }))))
                   : null,
                 article.toc.length >= 3
                   ? h('details', { className: 'mrss-toc' },

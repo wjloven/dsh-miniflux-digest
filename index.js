@@ -21,7 +21,7 @@ import {
 import { tweetFromSyndication } from './lib/tweet.js'
 import { createCache } from './lib/cache.js'
 
-const VERSION = '1.6.7'
+const VERSION = '1.6.8'
 const PREFIX = '/rss-miniflux/api'
 const CREDENTIAL_KEY = 'rss-miniflux'
 const META_TTL = 60_000
@@ -1385,6 +1385,13 @@ export function apply(ctx, config = {}) {
           tweets[id] = await loadTweet(id)
         }))
         return json({ tweets }, 200, { 'server-timing': `tweets;dur=${Date.now() - started}` })
+      }
+      if (method === 'GET' && route === '/echo-referer') {
+        // Diagnostic for embedded players: YouTube needs the Referer, and a
+        // host shell that suppresses it (Referrer-Policy or a stripped header)
+        // makes some embeds answer "error 153". The panel asks once and picks
+        // the player that can actually work here.
+        return json({ referer: request.headers.get('referer') || '' })
       }
       if (method === 'GET' && route === '/accounts') {
         return json(await accountsSnapshot())

@@ -1,6 +1,6 @@
 {
   "name": "rss-miniflux-deepread",
-  "version": "1.6.7",
+  "version": "1.6.8",
   "private": true,
   "description": "A desktop reader and AI digest plugin for Miniflux inside DeepSeek Harness.",
   "license": "MIT",
