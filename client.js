@@ -404,44 +404,6 @@ window.__ModuleLoader__.load({
       return ''
     }
 
-    /**
-     * Does a request from this page carry a Referer?
-     *
-     * YouTube's embedded player requires it — without one it answers "error
-     * 153", and neither `origin=` nor `enablejsapi=1` changes that (measured).
-     * An element-level referrerpolicy overrides a `no-referrer` document, but a
-     * host shell can drop the header further down, where HTML cannot reach. The
-     * only way to know is to ask the Host what it actually received.
-     */
-    const REFERER_CACHE_KEY = 'rss-miniflux:referer:v1'
-    let refererProbe = null
-
-    function probeReferer() {
-      if (refererProbe) return refererProbe
-      try {
-        const cached = JSON.parse(sessionStorage.getItem(REFERER_CACHE_KEY) || 'null')
-        if (cached && Date.now() - Number(cached.at) < 5 * 60_000) {
-          refererProbe = Promise.resolve(Boolean(cached.ok))
-          return refererProbe
-        }
-      } catch {
-        // private mode: probe once per page load instead of once per session
-      }
-      refererProbe = callApi('/echo-referer', { referrerPolicy: 'strict-origin-when-cross-origin' })
-        .then((result) => {
-          // A failed probe proves nothing; keep the richer player.
-          const ok = result.ok ? Boolean(String(result.data?.referer || '')) : true
-          try {
-            sessionStorage.setItem(REFERER_CACHE_KEY, JSON.stringify({ at: Date.now(), ok }))
-          } catch {
-            // ignore
-          }
-          return ok
-        })
-        .catch(() => true)
-      return refererProbe
-    }
-
     /** The page a fallback card should open. */
     function embedPageUrl(embed) {
       const id = String(embed?.id || '')
@@ -486,14 +448,22 @@ window.__ModuleLoader__.load({
 
     function ArticleEmbed({ embed, t }) {
       const src = embedSource(embed)
-      // Optimistic: the player is the richer result, and only YouTube needs the
-      // Referer check. A negative answer swaps to a card that always works.
+      const frameRef = useRef(null)
+      // The player document reports whether *it* can send a Referer. Only if it
+      // cannot (a shell that strips the header outright) do we stop pretending
+      // a player can work and show a card that opens the video instead.
       const [refererMissing, setRefererMissing] = useState(false)
       useEffect(() => {
         if (!src || embed.provider !== 'youtube') return undefined
-        let alive = true
-        probeReferer().then((ok) => { if (alive && !ok) setRefererMissing(true) })
-        return () => { alive = false }
+        const onMessage = (event) => {
+          const frame = frameRef.current
+          if (!frame || event.source !== frame.contentWindow) return
+          const data = event.data
+          if (!data || data.source !== 'rss-miniflux-player') return
+          if (data.referer === false) setRefererMissing(true)
+        }
+        window.addEventListener('message', onMessage)
+        return () => window.removeEventListener('message', onMessage)
       }, [src, embed.provider])
       if (!src) return null
       if (refererMissing) return articleEmbedFallback(embed, t)
@@ -501,6 +471,7 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'mrss-embed', 'data-provider': embed.provider },
         h('iframe', {
           src,
+          ref: frameRef,
           title,
           loading: 'lazy',
           // YouTube refuses a frame whose origin it cannot see: with the

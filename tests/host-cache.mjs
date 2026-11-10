@@ -329,6 +329,8 @@ async function main() {
   assert.match(playerHtml, /<meta name="referrer" content="strict-origin-when-cross-origin">/, 'the meta tag backs up the header')
   assert.match(playerHtml, /youtube-nocookie\.com\/embed\/aqz-KE-bpKQ/, 'the page embeds the requested video')
   assert.match(playerHtml, /allowfullscreen/, 'fullscreen must survive')
+  assert.match(playerHtml, /rss-miniflux-player/, 'the page reports back whether it can send a Referer')
+  assert.match(String(playerPage.headers.get('content-security-policy')), /connect-src 'self'/, 'the page must be allowed to probe itself')
   const badPlayer = await playerRoute.resource(
     new Request('http://127.0.0.1/rss-miniflux/player?id=..%2F..%2Fetc%2Fpasswd'),
     { principal: { kind: 'owner' } },

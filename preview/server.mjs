@@ -116,7 +116,7 @@ function send(res, status, body, type = 'application/json; charset=utf-8') {
  * Mirrors the Host's player document: its own referrer policy is the reason a
  * YouTube embed survives a `no-referrer` shell (error 153 without it).
  */
-function playerPage(id) {
+function playerPage(id, reportNoReferer = false) {
   const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?rel=0&playsinline=1`
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -126,6 +126,11 @@ function playerPage(id) {
 <style>html,body{margin:0;height:100%;background:#000;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}</style>
 </head><body>
 <iframe src="${src}" title="YouTube video" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" allowfullscreen sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"></iframe>
+<script>
+  // Mirrors the Host: the player document reports whether it can send a
+  // Referer. The noref query parameter models a shell that strips it.
+  parent.postMessage({ source: 'rss-miniflux-player', referer: ${reportNoReferer ? 'false' : 'true'} }, '*')
+</script>
 </body></html>`
 }
 
@@ -143,9 +148,9 @@ const server = http.createServer((req, res) => {
       'content-type': 'text/html; charset=utf-8',
       'referrer-policy': 'strict-origin-when-cross-origin',
       'cache-control': 'private, max-age=3600',
-      'content-security-policy': "default-src 'none'; frame-src https://www.youtube-nocookie.com; style-src 'unsafe-inline'",
+      'content-security-policy': "default-src 'none'; frame-src https://www.youtube-nocookie.com; style-src 'unsafe-inline'; script-src 'unsafe-inline'",
     })
-    return res.end(playerPage(id))
+    return res.end(playerPage(id, url.searchParams.get('noref') === '1'))
   }
 
   if (route.startsWith('/rss-miniflux/api/')) {

@@ -1,15 +1,16 @@
 /**
- * When the host strips the Referer, do not render a player that cannot work.
+ * The player document reports whether it can send a Referer.
  *
- * YouTube's embed needs the Referer (error 153 otherwise). Our iframe sets its
- * own referrerpolicy, which covers a `no-referrer` document, but a shell that
- * drops the header deeper down defeats it — no HTML attribute helps there. The
- * panel therefore asks the Host once what it actually received and, when the
- * answer is "nothing", shows a thumbnail card that opens the video in the
- * browser instead of a black error box.
+ * YouTube's embedded player needs one ("error 153"), and the *player document's*
+ * policy is what decides it — not the embedding page's. So the check lives in
+ * the Host-served player page and arrives here as a message:
  *
- * The same page also renders the real player when a Referer does arrive, so the
- * two paths are checked against the same article.
+ *   { source: 'rss-miniflux-player', referer: false }
+ *
+ * Only that negative answer swaps the player for a card: a shell that strips the
+ * header outright means no player can work, and a card that opens the video in
+ * the browser is better than a black error box. Until it arrives the player
+ * stays, because it is the richer result.
  *
  *   node tests/embed-fallback.mjs
  */
@@ -96,24 +97,6 @@ async function connect(wsUrl) {
   }
 }
 
-/**
- * Answer `/echo-referer` from the URL, decided at document start: the restored
- * snapshot can reopen the last article before a test could install anything.
- * `?noref=1` models a host that strips the header.
- */
-const PROBE = `(() => {
-  try { sessionStorage.removeItem('rss-miniflux:referer:v1') } catch (error) { /* ignore */ }
-  const missing = new URL(location.href).searchParams.get('noref') === '1'
-  const original = window.fetch
-  window.fetch = async (input, init) => {
-    const url = String(typeof input === 'string' ? input : (input && input.url) || '')
-    if (!url.includes('/rss-miniflux/api/echo-referer')) return original(input, init)
-    return new Response(JSON.stringify({ referer: missing ? '' : 'http://127.0.0.1/' }), {
-      status: 200, headers: { 'content-type': 'application/json' },
-    })
-  }
-})()`
-
 async function run() {
   const server = spawn(process.execPath, [path.join(root, 'preview/server.mjs'), '--port', String(PORT), '--delay', String(DELAY)], {
     stdio: 'ignore',
@@ -148,7 +131,6 @@ async function run() {
     await client.send('Emulation.setDeviceMetricsOverride', {
       width: 1360, height: 880, deviceScaleFactor: 1, mobile: false,
     })
-    await client.send('Page.addScriptToEvaluateOnNewDocument', { source: PROBE })
 
     const evaluate = async (expression) => {
       const result = await client.send('Runtime.evaluate', {
@@ -158,60 +140,77 @@ async function run() {
       return result.result?.value
     }
 
-    /** Reload with a fresh probe answer, open the video article, report the embed. */
-    let caseIndex = 0
-    const openVideoArticle = async ({ referer }) => {
-      caseIndex += 1
-      await client.send('Page.navigate', { url: `${URL_BASE}?noref=${referer ? 0 : 1}&case=${caseIndex}` })
-      const until = Date.now() + 20_000
-      while (Date.now() < until) {
-        if (await evaluate('document.querySelectorAll(".mrss-item").length > 3')) break
-        await wait(150)
+    const state = () => evaluate(`(() => {
+      const card = document.querySelector('.mrss-embed--link')
+      const frame = document.querySelector('.mrss-embed iframe')
+      return {
+        kind: card ? 'card' : (frame ? 'frame' : 'other'),
+        src: frame ? frame.getAttribute('src') : '',
+        href: card ? card.getAttribute('href') : '',
+        thumb: card ? (document.querySelector('.mrss-embed-thumb')?.getAttribute('src') || '') : '',
+        hint: card ? (card.innerText || '').trim().slice(0, 80) : '',
       }
+    })()`)
+
+    /**
+     * Re-load the player with the preview's `noref=1` flag, which is the page
+     * reporting "I cannot send a Referer" — the same message the Host's real
+     * player sends after its own probe.
+     */
+    const reportMissingReferer = () => evaluate(`(async () => {
+      const frame = document.querySelector('.mrss-embed iframe')
+      if (!frame) return false
+      frame.src = frame.src.includes('?') ? frame.src + '&noref=1' : frame.src + '?noref=1'
+      const deadline = performance.now() + 10_000
+      while (performance.now() < deadline) {
+        if (document.querySelector('.mrss-embed--link')) return true
+        await new Promise((resolve) => setTimeout(resolve, 60))
+      }
+      return false
+    })()`)
+
+    await client.send('Page.navigate', { url: URL_BASE })
+    const until = Date.now() + 20_000
+    while (Date.now() < until) {
+      if (await evaluate('document.querySelectorAll(".mrss-item").length > 3')) break
       await wait(150)
-      const opened = await evaluate(`(async () => {
-        const rows = [...document.querySelectorAll('.mrss-item')]
-        const row = rows.find((node) => /youtube/i.test(node.querySelector('.mrss-item-title')?.textContent || ''))
-        if (!row) return false
-        row.click()
-        const until = performance.now() + 15_000
-        while (performance.now() < until) {
-          if (document.querySelector('.mrss-embed')) break
-          await new Promise((resolve) => setTimeout(resolve, 60))
-        }
-        return Boolean(document.querySelector('.mrss-embed'))
-      })()`)
-      assert.equal(opened, true, 'the video article never rendered an embed')
-      // Give the probe a moment to resolve and React to swap, if it will.
-      await wait(600)
-      return evaluate(`(() => {
-        const card = document.querySelector('.mrss-embed')
-        const link = document.querySelector('.mrss-embed--link')
-        const frame = document.querySelector('.mrss-embed iframe')
-        const thumb = document.querySelector('.mrss-embed-thumb')
-        return {
-          kind: link ? 'card' : (frame ? 'frame' : 'other'),
-          href: link ? link.getAttribute('href') : (frame ? frame.getAttribute('src') : ''),
-          thumb: thumb ? thumb.getAttribute('src') : '',
-          hint: card ? (card.innerText || '').trim().slice(0, 80) : '',
-        }
-      })()`)
     }
+    const opened = await evaluate(`(async () => {
+      const rows = [...document.querySelectorAll('.mrss-item')]
+      const row = rows.find((node) => /youtube/i.test(node.querySelector('.mrss-item-title')?.textContent || ''))
+      if (!row) return false
+      row.click()
+      const deadline = performance.now() + 15_000
+      while (performance.now() < deadline) {
+        if (document.querySelector('.mrss-embed')) break
+        await new Promise((resolve) => setTimeout(resolve, 60))
+      }
+      return Boolean(document.querySelector('.mrss-embed'))
+    })()`)
+    assert.equal(opened, true, 'the video article never rendered an embed')
 
-    const withReferer = await openVideoArticle({ referer: true })
-    assert.equal(withReferer.kind, 'frame', `a Referer should keep the real player, saw ${JSON.stringify(withReferer)}`)
-    // The player is our own document now; it is what carries the referrer policy.
-    assert.match(withReferer.href, /^\/rss-miniflux\/player\?id=/, `unexpected player src: ${withReferer.href}`)
+    // 1. The player is the default: the report has not arrived yet.
+    const beforeReport = await state()
+    assert.equal(beforeReport.kind, 'frame', `the player should be shown first, saw ${JSON.stringify(beforeReport)}`)
+    assert.match(beforeReport.src, /^\/rss-miniflux\/player\?id=/, `unexpected player src: ${beforeReport.src}`)
 
-    const withoutReferer = await openVideoArticle({ referer: false })
-    assert.equal(withoutReferer.kind, 'card', `a missing Referer should fall back to a card, saw ${JSON.stringify(withoutReferer)}`)
-    assert.match(withoutReferer.href, /^https:\/\/www\.youtube\.com\/watch\?v=/, `the card should open the video, saw ${withoutReferer.href}`)
-    assert.match(withoutReferer.thumb, /^https:\/\/i\.ytimg\.com\/vi\//, `the card should use a thumbnail, saw ${withoutReferer.thumb}`)
-    assert.ok(withoutReferer.hint.length > 0, 'the card should explain itself')
+    // 2. The preview's player reports a Referer on load, and the player stays:
+    //    the positive path is the default one.
+    await wait(600)
+    assert.equal((await state()).kind, 'frame', 'a positive report must keep the player')
+
+    // 3. A negative report swaps in the card, which always works.
+    assert.equal(await reportMissingReferer(), true, 'the player never reported a missing Referer')
+    await wait(200)
+    const afterReport = await state()
+    assert.equal(afterReport.kind, 'card', `a missing Referer should fall back, saw ${JSON.stringify(afterReport)}`)
+    assert.match(afterReport.href, /^https:\/\/www\.youtube\.com\/watch\?v=/, `the card should open the video, saw ${afterReport.href}`)
+    assert.match(afterReport.thumb, /^https:\/\/i\.ytimg\.com\/vi\//, `the card should use a thumbnail, saw ${afterReport.thumb}`)
+    assert.ok(afterReport.hint.length > 0, 'the card should explain itself')
 
     assert.deepEqual(client.problems, [], `page errors: ${client.problems.join(' | ')}`)
-    console.log('[embed] with referer:', JSON.stringify(withReferer))
-    console.log('[embed] without referer:', JSON.stringify(withoutReferer))
+    console.log('[embed] before report:', JSON.stringify(beforeReport))
+    console.log('[embed] after negative report:', JSON.stringify(afterReport))
     client.close()
   } finally {
     cleanup()

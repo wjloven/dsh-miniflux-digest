@@ -21,7 +21,7 @@ import {
 import { tweetFromSyndication } from './lib/tweet.js'
 import { createCache } from './lib/cache.js'
 
-const VERSION = '1.6.9'
+const VERSION = '1.7.0'
 const PREFIX = '/rss-miniflux/api'
 // A player document we serve ourselves. YouTube needs the embedding request to
 // carry a Referer; an app shell can strip it from its own pages, but the policy
@@ -1260,6 +1260,29 @@ export function apply(ctx, config = {}) {
 <style>html,body{margin:0;height:100%;background:#000;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}</style>
 </head><body>
 <iframe src="${src}" title="YouTube video" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" allowfullscreen sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"></iframe>
+<script>
+  // Report whether *this* document can send a Referer — it is the document the
+  // player request comes from, and the only one whose policy we control. The
+  // embedding page asks about itself and would answer for the wrong document.
+  (async function report() {
+    var ok = true
+    try {
+      var response = await fetch('/rss-miniflux/api/echo-referer', {
+        referrerPolicy: 'strict-origin-when-cross-origin',
+        cache: 'no-store',
+      })
+      var payload = await response.json()
+      ok = Boolean(payload && payload.referer)
+    } catch (error) {
+      ok = true
+    }
+    try {
+      parent.postMessage({ source: 'rss-miniflux-player', referer: ok }, '*')
+    } catch (error) {
+      // a detached frame simply has nobody to tell
+    }
+  })()
+</script>
 </body></html>`
   }
 
@@ -1272,7 +1295,7 @@ export function apply(ctx, config = {}) {
         // embedding application suppresses it for its own documents.
         'referrer-policy': 'strict-origin-when-cross-origin',
         'cache-control': 'private, max-age=3600',
-        'content-security-policy': "default-src 'none'; frame-src https://www.youtube-nocookie.com; style-src 'unsafe-inline'",
+        'content-security-policy': "default-src 'none'; frame-src https://www.youtube-nocookie.com; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'",
         'x-content-type-options': 'nosniff',
       },
     })
