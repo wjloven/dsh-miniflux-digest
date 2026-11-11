@@ -22,7 +22,7 @@ import { tweetFromSyndication } from './lib/tweet.js'
 import { createCache } from './lib/cache.js'
 import http from 'node:http'
 
-const VERSION = '1.8.0'
+const VERSION = '1.8.1'
 const PREFIX = '/rss-miniflux/api'
 // A player document we serve ourselves. YouTube needs the embedding request to
 // carry a Referer; an app shell can strip it from its own pages, but the policy

@@ -21,6 +21,7 @@ What was tested, on which setup, and what is still unverified.
 | 状态保持 | 面板状态改为组件外缓存：筛选、搜索、选中条目、正/列表滚动位置都跨挂载保留；进入时不重取，侧栏刷新按钮 / `r` 才更新（无浏览器控制，未做交互级验证） |
 | 推理强度 | 通过：`GET /efforts` 对两个 provider 返回各自声明的档位；同一请求 off 7.6s / low 21.0s，元信息正确记录所选档位 |
 | 侧栏头部 | 通过（headless Chromium）：`+` 菜单的 New feed / New category 各开独立弹框，Import OPML 直接触发隐藏的 file input（不打开设置）；齿轮落在 Preferences；200px 侧栏下标题与时间不截断 |
+| 切换范围清空阅读区 | 通过（headless Chromium，`tests/scope-switch.mjs`）：在 All 打开第 0 行后点订阅源 → 阅读区回到空态、无高亮行、快照记 `selectedId: null`；在订阅源内打开文章后切分类同样清空；重复点当前分类保留文章与选中行；点 All 也清空；点开文章后在请求返回前切走，正文不再出现（`Opening…` 期间切走，1.8 s 后仍是空态） |
 | 过滤联动 | 通过（headless Chromium）：Unread 19 个源、数字为未读、头部 `207 unread`；Starred 13 个源、数字为星标数、头部 `36 starred`；All 20 个源、无行尾数字、头部 `20 feeds`；在 Starred 下切到 Articles 仍保持 Starred（5 个源、头部 `8 starred`），点订阅源也不重置 |
 | feed-stats | 预览 mock 上验证客户端联动；Host 按星标条目聚合每个源，`live-api.mjs` 已加断言，需重启 Host 后复跑；真实账号的星标量/耗时尚未实测 |
 | Switch account | 通过（预览双账号 mock）：底部显示 `SWITCH ACCOUNT / 当前账号`；点开菜单向上弹出，含账号列表、`Add account…`、`Manage accounts…`；切到 work 后底部与 `boot.status` 一起变；Accounts 弹框可切换/删除/添加，设置只剩 Preferences / Shortcuts |

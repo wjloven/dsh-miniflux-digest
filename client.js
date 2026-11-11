@@ -3413,6 +3413,10 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
 
       /** Close the reader (same as Esc): clear the selection and show the empty state. */
       const closeArticle = useCallback(() => {
+        // A body that is still in flight belongs to the article that was open.
+        // Bumping the sequence drops it on arrival instead of letting it paint
+        // over the empty state (Esc or a scope switch while it loads).
+        articleSeq.current += 1
         setArticleState('idle')
         setSelectedId(null)
         setFullView(false)
@@ -3475,7 +3479,14 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
        */
       const listFollowRef = useRef('')
       useEffect(() => {
-        if (!selectedId) return
+        if (!selectedId) {
+          // Closing the reader ends that (scope, article) pair: reopening the
+          // same article later — after another scope, or after Esc — should
+          // bring its row back into view instead of being treated as already
+          // followed.
+          listFollowRef.current = ''
+          return
+        }
         // While a scope is being swapped the rows on screen still belong to the
         // previous one; scrolling those would leave the new list parked at an
         // offset that means nothing. The effect re-runs when the rows land.
@@ -3680,9 +3691,23 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         setShowAddFeed(true)
       }
 
+      /**
+       * Switch the list to another scope (a whole category or one feed).
+       *
+       * The reader is cleared when the scope actually changes: the open article
+       * belongs to the list the user just left, and keeping it on screen in a
+       * different feed is how "the third column is still showing the previous
+       * feed's post" happens. Re-clicking the scope that is already active is a
+       * no-op and keeps the article. A plain filter change (Unread/Starred/All)
+       * is not a scope change and also keeps it.
+       */
       const openScope = (nextScope, nextFilter = filter) => {
+        const kind = nextScope?.kind || 'all'
+        const id = nextScope?.id ?? null
+        const changed = kind !== scope.kind || id !== (scope.id ?? null)
         setFilter(nextFilter)
-        setScope(nextScope)
+        setScope({ kind, id, title: nextScope?.title || '' })
+        if (changed) closeArticle()
       }
 
       const [menu, setMenu] = useState(null)
@@ -3900,14 +3925,14 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
               forgetIcon(feed.id)
               if (scope.kind === 'feed' && scope.id === feed.id) {
                 setScope({ kind: 'all', id: null, title: '' })
-                setSelectedId(null)
+                closeArticle()
                 PANEL_CACHE.entriesKey = ''
               }
               afterCatalogChange()
             }
           },
         }) },
-      ], [afterCatalogChange, manageAction, notify, scope, t])
+      ], [afterCatalogChange, closeArticle, manageAction, notify, scope, t])
 
       const categoryActions = useCallback((group) => [
         { label: t('menu.markCategoryRead'), icon: 'check', run: async () => {
@@ -3939,14 +3964,14 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
               notify(t('menu.categoryDeleted'))
               if (scope.kind === 'category' && scope.id === group.id) {
                 setScope({ kind: 'all', id: null, title: '' })
-                setSelectedId(null)
+                closeArticle()
                 PANEL_CACHE.entriesKey = ''
               }
               afterCatalogChange()
             }
           },
         }) },
-      ], [afterCatalogChange, manageAction, notify, scope, t])
+      ], [afterCatalogChange, closeArticle, manageAction, notify, scope, t])
 
       const markAboveRead = useCallback(async (item) => {
         const index = visibleEntries.findIndex((entry) => entry.id === item.id)

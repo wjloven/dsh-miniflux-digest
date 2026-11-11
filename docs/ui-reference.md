@@ -44,6 +44,7 @@ What every part of the panel does, control by control. Useful when changing the 
 
 - `Unread`：侧栏只列出有未读的订阅源，行尾数字是未读数；`Starred`：只列出有星标的源，数字换成星标数；`All`：列出全部源，行尾不显示数字。
 - 切换订阅源或分类时保持当前过滤，不再重置回 Unread；`p/n`、分类 tab、订阅源点击都遵守同一条。
+- 换订阅源或分类时第三栏回到空白：打开的文章属于刚离开的列表，留着它就会在新列表里显示上一篇的内容；重复点当前分类、或只换 Unread / Starred / All 过滤，都不清空。
 - 侧栏当前分类那一行的数字与 tab 的 hover 文案也跟着过滤变（未读数 / 星标数 / 源数量）。
 - 星标按订阅聚合没有现成 API：Host 的 `GET /feed-stats` 会抓最多 1000 条星标条目统计每个源的星标数，缓存 60 秒；星标条目更多的账号会截断，只有更早星标的源可能不出现在 Starred 清单里。
 
