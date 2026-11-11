@@ -433,13 +433,55 @@ window.__ModuleLoader__.load({
       }, t('embed.openExternal'))
     }
 
+    /**
+     * The origin the player document is served from.
+     *
+     * The desktop window runs on `dsh-app://app`, which cannot produce a
+     * Referer — YouTube then answers "error 153". The Host serves the same page
+     * from a loopback http origin, which can. Resolved once per session.
+     */
+    const PLAYER_ORIGIN_KEY = 'rss-miniflux:player-origin:v1'
+    let playerOriginValue = null
+
+    function playerOrigin() {
+      if (playerOriginValue !== null) return Promise.resolve(playerOriginValue)
+      try {
+        const cached = sessionStorage.getItem(PLAYER_ORIGIN_KEY)
+        if (cached !== null) {
+          playerOriginValue = cached
+          return Promise.resolve(cached)
+        }
+      } catch {
+        // private mode: ask once per page
+      }
+      return callApi('/player-origin')
+        .then((result) => {
+          const origin = result.ok && typeof result.data?.origin === 'string' ? result.data.origin : ''
+          playerOriginValue = origin
+          try { sessionStorage.setItem(PLAYER_ORIGIN_KEY, origin) } catch { /* ignore */ }
+          return origin
+        })
+        .catch(() => '')
+    }
+
     function ArticleEmbed({ embed, t }) {
       const src = embedSource(embed)
+      const [playerSrc, setPlayerSrc] = useState(src)
       const frameRef = useRef(null)
       // The player document reports whether it can send a Referer. Recorded for
       // diagnosis only — it never decides whether the player is shown.
       const [referer, setReferer] = useState(null)
       const [diag, setDiag] = useState('')
+      useEffect(() => {
+        if (!src || embed.provider !== 'youtube') return undefined
+        let alive = true
+        playerOrigin().then((origin) => {
+          // The local http origin is what lets the player send a Referer; the
+          // relative fallback keeps the embed working if it is unavailable.
+          if (alive && origin) setPlayerSrc(`${origin}/player?id=${encodeURIComponent(embed.id)}`)
+        })
+        return () => { alive = false }
+      }, [src, embed.provider, embed.id])
       useEffect(() => {
         if (!src || embed.provider !== 'youtube') return undefined
         const onMessage = (event) => {
@@ -463,7 +505,7 @@ window.__ModuleLoader__.load({
         'data-player-diag': diag || undefined,
       },
         h('iframe', {
-          src,
+          src: playerSrc,
           ref: frameRef,
           title,
           loading: 'lazy',

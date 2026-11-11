@@ -20,8 +20,9 @@ import {
 } from './lib/html.js'
 import { tweetFromSyndication } from './lib/tweet.js'
 import { createCache } from './lib/cache.js'
+import http from 'node:http'
 
-const VERSION = '1.7.2'
+const VERSION = '1.8.0'
 const PREFIX = '/rss-miniflux/api'
 // A player document we serve ourselves. YouTube needs the embedding request to
 // carry a Referer; an app shell can strip it from its own pages, but the policy
@@ -1250,7 +1251,7 @@ export function apply(ctx, config = {}) {
    * own referrer policy (header *and* meta, since either can be the one that
    * survives), and a CSP that allows nothing but the player.
    */
-  function playerPage(id) {
+  function playerPage(id, probePath = '/referer') {
     const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?rel=0&playsinline=1`
     return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -1268,7 +1269,7 @@ export function apply(ctx, config = {}) {
   (async function report() {
     var ok = true
     try {
-      var response = await fetch('/rss-miniflux/api/echo-referer', {
+      var response = await fetch('${probePath}', {
         referrerPolicy: 'strict-origin-when-cross-origin',
         cache: 'no-store',
       })
@@ -1326,6 +1327,73 @@ export function apply(ctx, config = {}) {
         'x-content-type-options': 'nosniff',
       },
     })
+  }
+
+  /**
+   * A tiny loopback HTTP server that serves the player document.
+   *
+   * The desktop app loads its window from `dsh-app://app`, and a referrer can
+   * only be produced from an http(s) origin — so a player embedded straight
+   * into that document never carries the Referer YouTube requires (error 153).
+   * Serving the same page from `http://127.0.0.1:<port>` gives it a real origin,
+   * and YouTube then receives `Referer: http://127.0.0.1:<port>/player?id=…`.
+   *
+   * Loopback only, GET only, one page and one echo route.
+   */
+  const playerHost = { server: null, origin: '', ready: null }
+
+  function handlePlayerHost(req, res) {
+    const url = new URL(req.url, 'http://127.0.0.1')
+    if (req.method !== 'GET') {
+      res.writeHead(405, { 'content-type': 'text/plain; charset=utf-8' })
+      return res.end('GET only')
+    }
+    if (url.pathname === '/referer') {
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+      return res.end(JSON.stringify({ referer: req.headers.referer || '' }))
+    }
+    if (url.pathname === '/player') {
+      const id = String(url.searchParams.get('id') || '')
+      if (!PLAYER_ID.test(id)) {
+        res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+        return res.end('Bad video id')
+      }
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'referrer-policy': 'strict-origin-when-cross-origin',
+        'cache-control': 'private, max-age=3600',
+        'content-security-policy': "default-src 'none'; frame-src https://www.youtube-nocookie.com; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'",
+        'x-content-type-options': 'nosniff',
+      })
+      return res.end(playerPage(id))
+    }
+    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+    res.end('not found')
+  }
+
+  function ensurePlayerHost() {
+    if (playerHost.ready) return playerHost.ready
+    playerHost.ready = new Promise((resolve) => {
+      let server
+      try {
+        server = http.createServer(handlePlayerHost)
+      } catch (error) {
+        ctx.logger?.warn?.(`rss-miniflux: player origin unavailable: ${error?.message || error}`)
+        return resolve('')
+      }
+      server.on('error', (error) => {
+        ctx.logger?.warn?.(`rss-miniflux: player origin failed: ${error?.message || error}`)
+        playerHost.server = null
+        playerHost.origin = ''
+        resolve('')
+      })
+      server.listen(0, '127.0.0.1', () => {
+        playerHost.server = server
+        playerHost.origin = `http://127.0.0.1:${server.address().port}`
+        resolve(playerHost.origin)
+      })
+    })
+    return playerHost.ready
   }
 
   async function handlePlayer(request, peer) {
@@ -1486,6 +1554,11 @@ export function apply(ctx, config = {}) {
           tweets[id] = await loadTweet(id)
         }))
         return json({ tweets }, 200, { 'server-timing': `tweets;dur=${Date.now() - started}` })
+      }
+      if (method === 'GET' && route === '/player-origin') {
+        // The panel embeds the player from this origin: only an http(s) origin
+        // can send the Referer YouTube needs.
+        return json({ origin: await ensurePlayerHost() })
       }
       if (method === 'GET' && route === '/echo-referer') {
         // Diagnostic for embedded players: YouTube needs the Referer, and a
@@ -1857,6 +1930,19 @@ export function apply(ctx, config = {}) {
       resource: (request, peer) => handlePlayer(request, peer),
     }),
     'rss-miniflux: player page',
+  )
+  ctx.effect(
+    () => {
+      void ensurePlayerHost()
+      return () => {
+        const server = playerHost.server
+        playerHost.server = null
+        playerHost.origin = ''
+        playerHost.ready = null
+        try { server?.close() } catch { /* already gone */ }
+      }
+    },
+    'rss-miniflux: player origin',
   )
   ctx.effect(
     () => writeRoute(`${PREFIX}/action`, ['POST'], (body) => handleAction(body)),

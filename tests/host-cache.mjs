@@ -166,6 +166,7 @@ async function main() {
     },
   }
   const tools = { register: () => {} }
+  const disposers = []
   const ctx = {
     webServer,
     tools,
@@ -175,7 +176,8 @@ async function main() {
       return undefined
     },
     effect: (factory) => {
-      factory()
+      const dispose = factory()
+      if (typeof dispose === 'function') disposers.push(dispose)
       return () => {}
     },
     inject: () => {},
@@ -337,6 +339,34 @@ async function main() {
   )
   assert.equal(badPlayer.status, 400, 'a video id that is not an id must be refused')
 
+  // 4c. The player origin. The desktop window runs on dsh-app://, which cannot
+  //     produce a Referer; the loopback http origin can, and that is the whole
+  //     point of serving the player from it.
+  const originRes = await get('/rss-miniflux/api/player-origin')
+  assert.equal(originRes.status, 200)
+  const playerOrigin = String(originRes.body.origin || '')
+  assert.match(playerOrigin, /^http:\/\/127\.0\.0\.1:\d+$/, `expected a loopback http origin, saw ${playerOrigin}`)
+
+  const hostedPage = await fetch(`${playerOrigin}/player?id=aqz-KE-bpKQ`)
+  assert.equal(hostedPage.status, 200, 'the loopback player page must load')
+  assert.equal(hostedPage.headers.get('referrer-policy'), 'strict-origin-when-cross-origin')
+  const hostedHtml = await hostedPage.text()
+  assert.match(hostedHtml, /youtube-nocookie\.com\/embed\/aqz-KE-bpKQ/, 'it embeds the requested video')
+  assert.match(hostedHtml, /fetch\('\/referer'/, 'its probe talks to the loopback origin, not to the app scheme')
+
+  const echoed = await new Promise((resolve, reject) => {
+    http.get(`${playerOrigin}/referer`, { headers: { Referer: 'http://127.0.0.1:9/player?id=x' } }, (response) => {
+      let body = ''
+      response.on('data', (chunk) => { body += chunk })
+      response.on('end', () => resolve({ status: response.statusCode, body }))
+    }).on('error', reject)
+  })
+  assert.equal(echoed.status, 200)
+  assert.equal(JSON.parse(echoed.body).referer, 'http://127.0.0.1:9/player?id=x', 'the echo reports the Referer it received')
+
+  const badId = await fetch(`${playerOrigin}/player?id=..%2F%2Fetc`)
+  assert.equal(badId.status, 400, 'a non-id is refused on the loopback origin too')
+
   // 5. A write patches the counters it changed, so the next bootstrap does not
   //    have to refetch them (that refetch is what used to fail and blank the
   //    sidebar).
@@ -401,6 +431,9 @@ async function main() {
   await get('/rss-miniflux/api/bootstrap')
   assert.ok(upstream.length - beforeRefresh >= 3, 'refresh must invalidate the catalog cache')
 
+  for (const dispose of disposers.reverse()) {
+    try { dispose() } catch { /* best effort */ }
+  }
   fake.close()
   console.log('host cache tests passed')
 }
