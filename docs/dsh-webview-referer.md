@@ -8,7 +8,21 @@ YouTube 的 [Required Minimum Functionality](https://developers.google.com/youtu
 - 播放器页 `/rss-miniflux/player?id=…` 自己发 `Referrer-Policy: strict-origin-when-cross-origin`（响应头 + `<meta>` 双保险），并自检能不能发出 Referer；
 - 发不出时降级成缩略图卡片，而不是黑底 Error 153。
 
-**发不出 Referer 的环境只能由宿主补**——这正是 NetNewsWire 7.1.2 做的事（`loadHTMLString:baseURL:` 换成文章真实站点），也是本文要交给 DSH 的改动。
+## 先确认：这个 DSH 构建并不剥 Referer
+
+翻过 `app.asar`（`@deepseek-ai/dsh-desktop`，`lib/main.js`）：
+
+- 全应用只有 **一处** `session.webRequest.onBeforeSendHeaders`，挂在**内嵌浏览器视图**的 session 上，逻辑是 origin 命中平台账户时**加上** `platformClientHeaders`，从不删除 `Referer`；
+- 没有任何响应头设置 `Referrer-Policy`（仅头像组件对自家 `<img>` 用了 `referrerPolicy: 'no-referrer'`）。
+
+实测（headless Chromium 直接打开线上播放器页）：
+
+```
+fetch('/rss-miniflux/api/echo-referer', { referrerPolicy: 'strict-origin-when-cross-origin' })
+→ {"referer":"http://127.0.0.1:<port>/rss-miniflux/player?id=…"}
+```
+
+**所以本构建不需要下面的补丁。** 只有当某个 shell（或未来的打包方式）真的把 `HTTP Referer` 抹掉时，才需要按官方 WebView 配方由宿主补——这正是 NetNewsWire 7.1.2 做的事（`loadHTMLString:baseURL:` 换成文章真实站点）。
 
 实测证据（headless Chromium，响应头 `Referrer-Policy: no-referrer` 的页面）：
 
@@ -20,6 +34,8 @@ YouTube 的 [Required Minimum Functionality](https://developers.google.com/youtu
 | `<iframe referrerpolicy="strict-origin-when-cross-origin">` | 带上（且 YouTube 能播） |
 
 所以：**页面内能做的只剩"不抑制"**；"凭空造一个"只能由发请求的一方做。
+
+下面两节留作**其他 shell**的参考，本构建实测不需要。
 
 ## 改动一：给 YouTube 域的请求补 Referer（最小改动）
 
