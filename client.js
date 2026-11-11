@@ -440,16 +440,26 @@ window.__ModuleLoader__.load({
      * Referer — YouTube then answers "error 153". The Host serves the same page
      * from a loopback http origin, which can. Resolved once per session.
      */
-    const PLAYER_ORIGIN_KEY = 'rss-miniflux:player-origin:v1'
-    let playerOriginValue = null
+    const PLAYER_ORIGIN_KEY = 'rss-miniflux:player-origin:v2'
+    // The loopback port changes whenever the Host half restarts, so a cached
+    // origin has to expire: otherwise a reloaded plugin leaves a dead player in
+    // an already-open tab.
+    const PLAYER_ORIGIN_TTL = 5 * 60_000
+    let playerOriginCache = null
 
     function playerOrigin() {
-      if (playerOriginValue !== null) return Promise.resolve(playerOriginValue)
+      const now = Date.now()
+      if (playerOriginCache && now - playerOriginCache.at < PLAYER_ORIGIN_TTL) {
+        return Promise.resolve(playerOriginCache.value)
+      }
       try {
-        const cached = sessionStorage.getItem(PLAYER_ORIGIN_KEY)
-        if (cached !== null) {
-          playerOriginValue = cached
-          return Promise.resolve(cached)
+        const raw = sessionStorage.getItem(PLAYER_ORIGIN_KEY)
+        if (raw) {
+          const parsed = JSON.parse(raw)
+          if (parsed && now - Number(parsed.at) < PLAYER_ORIGIN_TTL) {
+            playerOriginCache = { value: String(parsed.origin || ''), at: Number(parsed.at) }
+            return Promise.resolve(playerOriginCache.value)
+          }
         }
       } catch {
         // private mode: ask once per page
@@ -457,8 +467,10 @@ window.__ModuleLoader__.load({
       return callApi('/player-origin')
         .then((result) => {
           const origin = result.ok && typeof result.data?.origin === 'string' ? result.data.origin : ''
-          playerOriginValue = origin
-          try { sessionStorage.setItem(PLAYER_ORIGIN_KEY, origin) } catch { /* ignore */ }
+          playerOriginCache = { value: origin, at: Date.now() }
+          try {
+            sessionStorage.setItem(PLAYER_ORIGIN_KEY, JSON.stringify({ origin, at: playerOriginCache.at }))
+          } catch { /* ignore */ }
           return origin
         })
         .catch(() => '')
