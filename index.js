@@ -21,7 +21,7 @@ import {
 import { tweetFromSyndication } from './lib/tweet.js'
 import { createCache } from './lib/cache.js'
 
-const VERSION = '1.7.1'
+const VERSION = '1.7.2'
 const PREFIX = '/rss-miniflux/api'
 // A player document we serve ourselves. YouTube needs the embedding request to
 // carry a Referer; an app shell can strip it from its own pages, but the policy
@@ -1257,7 +1257,8 @@ export function apply(ctx, config = {}) {
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>YouTube</title>
-<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}</style>
+<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}
+.mrss-player-diag{position:fixed;left:0;right:0;bottom:0;z-index:5;padding:6px 8px;font:11px/1.45 -apple-system,sans-serif;color:#fecaca;background:rgba(60,0,0,.82);word-break:break-all}</style>
 </head><body>
 <iframe src="${src}" title="YouTube video" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" allowfullscreen sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"></iframe>
 <script>
@@ -1271,10 +1272,28 @@ export function apply(ctx, config = {}) {
         referrerPolicy: 'strict-origin-when-cross-origin',
         cache: 'no-store',
       })
-      var payload = await response.json()
-      ok = Boolean(payload && payload.referer)
+      // Only a well-formed answer counts: a 403/404 (an older Host half) must
+      // not be read as "no Referer".
+      if (response.ok) {
+        var payload = await response.json()
+        if (payload && typeof payload.referer === 'string') ok = payload.referer.length > 0
+      }
     } catch (error) {
       ok = true
+    }
+    // A visible strip when the probe fails: one screenshot then explains the
+    // environment without DevTools.
+    if (!ok) {
+      try {
+        var strip = document.createElement('div')
+        strip.className = 'mrss-player-diag'
+        strip.textContent = 'no Referer | policy=' + (document.referrerPolicy || 'default')
+          + ' | origin=' + location.origin
+          + ' | ua=' + String(navigator.userAgent).slice(0, 90)
+        document.body.appendChild(strip)
+      } catch (error) {
+        // a page without a body is not worth reporting to
+      }
     }
     try {
       parent.postMessage({
@@ -1284,6 +1303,7 @@ export function apply(ctx, config = {}) {
         policy: document.referrerPolicy || '',
         docReferrer: document.referrer || '',
         origin: location.origin,
+        ua: String(navigator.userAgent).slice(0, 120),
       }, '*')
     } catch (error) {
       // a detached frame simply has nobody to tell

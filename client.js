@@ -448,7 +448,7 @@ window.__ModuleLoader__.load({
           const data = event.data
           if (!data || data.source !== 'rss-miniflux-player') return
           setReferer(data.referer === true)
-          setDiag(`referer=${data.referer === true};policy=${data.policy || ''};doc=${data.docReferrer || ''};origin=${data.origin || ''}`)
+          setDiag(`referer=${data.referer === true};policy=${data.policy || ''};doc=${data.docReferrer || ''};origin=${data.origin || ''};ua=${data.ua || ''}`)
         }
         window.addEventListener('message', onMessage)
         return () => window.removeEventListener('message', onMessage)
