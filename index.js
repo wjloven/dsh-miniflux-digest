@@ -21,8 +21,13 @@ import {
 import { tweetFromSyndication } from './lib/tweet.js'
 import { createCache } from './lib/cache.js'
 import http from 'node:http'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import path from 'node:path'
+import { readFile, stat as fsStat } from 'node:fs/promises'
 
-const VERSION = '1.8.2'
+const execFileAsync = promisify(execFile)
+const VERSION = '1.9.0'
 const PREFIX = '/rss-miniflux/api'
 // A player document we serve ourselves. YouTube needs the embedding request to
 // carry a Referer; an app shell can strip it from its own pages, but the policy
@@ -724,98 +729,15 @@ export function apply(ctx, config = {}) {
 
     const categoryTitle = categoryId ? (items[0].categoryTitle || `Category ${categoryId}`) : 'All categories'
     const input = buildBriefingInput(items, { categoryTitle })
-
-    const catalog = await modelCatalog()
-    let provider = ''
-    let model = ''
-    const requested = String(body.model || '')
-    if (requested.includes('::')) {
-      const [requestedProvider, requestedModel] = requested.split('::')
-      provider = requestedProvider
-      model = requestedModel
-    }
-    if (!provider) {
-      const selection = ctx.get('agentDefaultModel')?.currentSelection?.()
-      provider = selection?.provider || ''
-      model = selection?.model || ''
-    }
-    if (!provider || !model) throw new HttpError(400, 'no_model', catalog.error || 'No language model is selected.')
-    const known = catalog.models.find((entry) => entry.provider === provider && entry.model === model)
-    const modelLabel = known?.label || model
-
-    const effortInfo = await modelEfforts(`${provider}::${model}`)
-    const selection = ctx.get('agentDefaultModel')?.currentSelection?.()
-    let effort = String(body.effort || '')
-    if (effort && !effortInfo.efforts.some((entry) => entry.id === effort)) effort = ''
-    if (!effort && selection?.provider === provider && selection?.model === model && selection.reasoningEffort) {
-      const preferred = String(selection.reasoningEffort)
-      if (effortInfo.efforts.some((entry) => entry.id === preferred)) effort = preferred
-    }
-    if (!effort && effortInfo.defaultId) effort = effortInfo.defaultId
-    const effortLabel = effortInfo.efforts.find((entry) => entry.id === effort)?.name || ''
-
-    const llm = ctx.get('llm')
-    if (!llm || typeof llm.stream !== 'function') {
-      throw new HttpError(501, 'no_llm', 'Language model service is unavailable in this profile.')
-    }
-
-    const timeout = new AbortController()
-    const timer = setTimeout(() => timeout.abort(), 180_000)
-    const combined = signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal
-    const startedAt = Date.now()
-    let reply = ''
-    let finishKind = ''
-    try {
-      const stream = llm.stream({
-        provider,
-        model,
-        system: BRIEFING_SYSTEM,
-        messages: [{ role: 'user', content: [{ type: 'text', text: input.text }] }],
-        maxTokens: 8_000,
-        temperature: 0.3,
-        ...(effort ? { reasoningEffort: effort } : {}),
-        signal: combined,
-      })
-      for await (const chunk of stream) {
-        if (chunk.type === 'text-delta') {
-          reply += chunk.text
-        } else if (chunk.type === 'block-end' && chunk.block?.type === 'text' && reply === '') {
-          reply = chunk.block.text
-        } else if (chunk.type === 'finish') {
-          finishKind = chunk.reason?.kind || ''
-          if (chunk.reason?.kind === 'error') {
-            throw new HttpError(502, 'model_failed', chunk.reason.failure?.message || 'The model call failed.')
-          }
-          if (chunk.reason?.kind === 'aborted') {
-            throw new HttpError(499, 'aborted', 'Generation was cancelled.')
-          }
-          break
-        }
-      }
-    } catch (error) {
-      if (error instanceof HttpError) throw error
-      if (error?.name === 'AbortError' || error?.name === 'TimeoutError') {
-        throw new HttpError(504, 'timeout', 'The model call timed out or was cancelled.')
-      }
-      throw new HttpError(502, 'model_failed', error?.message || String(error))
-    } finally {
-      clearTimeout(timer)
-    }
-    if (!reply.trim()) {
-      throw new HttpError(
-        502,
-        'empty_reply',
-        finishKind === 'max-tokens'
-          ? 'The model used its whole output budget before writing anything. Try a smaller category or a different model.'
-          : 'The model returned no text. Try again or pick a different model.',
-      )
-    }
-    if (finishKind === 'max-tokens') {
-      ctx.logger?.warn?.('rss-miniflux: briefing hit the output token limit; the reply may be truncated')
-    }
-
-    const parsed = parseBriefing(reply)
-    ctx.logger?.info?.(`rss-miniflux: briefing for ${categoryTitle} via ${provider}/${model} in ${Date.now() - startedAt}ms`)
+    const run = await runModel({
+      system: BRIEFING_SYSTEM,
+      userText: input.text,
+      body,
+      signal,
+      maxTokens: 8_000,
+      temperature: 0.3,
+    })
+    const parsed = parseBriefing(run.reply)
     return {
       overview: parsed.overview,
       topics: parsed.topics,
@@ -824,20 +746,167 @@ export function apply(ctx, config = {}) {
       meta: {
         categoryId,
         categoryTitle,
-        provider,
-        model,
-        modelLabel,
-        effort,
-        effortLabel,
+        ...run.meta,
         entries: items.length,
         included: input.included,
         chars: input.text.length,
-        durationMs: Date.now() - startedAt,
         createdAt: new Date().toISOString(),
         demo,
-        finish: finishKind,
       },
     }
+  }
+
+  /**
+   * The context draft for a new DSH session: the timeline's name and count, then
+   * every title. The reader lands in the native composer with this text and can
+   * edit or send it; nothing is generated here.
+   */
+  /**
+   * The scoped timeline reader for the digest session: totals, a sample
+   * distribution, and one page of titles with ids for miniflux_read.
+   */
+  async function resolveTimelineScope(kind, id, titleHint, demo) {
+    if (kind === 'all') return { id: '', title: 'All articles' }
+    if (id) return { id: String(id), title: '' }
+    const catalog = await bootstrap(demo ? '1' : '')
+    const list = kind === 'category' ? (catalog.categories || []) : (catalog.feeds || [])
+    const label = kind === 'category' ? '分类' : '订阅源'
+    const normalize = (value) => String(value || '').normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase()
+    const needle = normalize(titleHint)
+    if (!needle) {
+      const names = list.slice(0, 12).map((item) => `${item.title} (id ${item.id})`).join('、')
+      throw new Error(`kind 为 ${kind} 时请提供 title 或 id。可用${label}：${names || '(空)'}。`)
+    }
+    const exact = list.filter((item) => normalize(item.title) === needle)
+    const partial = exact.length > 0
+      ? exact
+      : list.filter((item) => normalize(item.title).includes(needle) || needle.includes(normalize(item.title)))
+    if (partial.length === 1) return { id: String(partial[0].id), title: String(partial[0].title || '') }
+    const names = (partial.length > 0 ? partial : list).slice(0, 12)
+      .map((item) => `${item.title} (id ${item.id})`).join('、')
+    if (partial.length > 1) throw new Error(`“${titleHint}”匹配到多个${label}：${names}。请用 id 指定。`)
+    throw new Error(`没有找到${label}“${titleHint}”。可用：${names || '(空)'}。请用 id 或准确标题重试。`)
+  }
+
+  async function timelineText(args = {}) {
+    const settings = await resolveSettings()
+    const demo = Boolean(args.demo) || !settings.configured
+    const kind = ['all', 'category', 'feed'].includes(args.kind) ? args.kind : 'all'
+    const id = args.id === undefined || args.id === null || args.id === '' ? '' : String(args.id)
+    const filter = ['unread', 'starred', 'all'].includes(args.filter) ? args.filter : 'unread'
+    const query = String(args.query || '').trim()
+    const limit = Math.min(Math.max(Number(args.limit) || 30, 1), 50)
+    const offset = Math.max(Number(args.offset) || 0, 0)
+    const titleHint = String(args.title || '').trim()
+    const scope = await resolveTimelineScope(kind, id, titleHint, demo)
+    const resolvedId = scope.id
+
+    let all = []
+    let total = 0
+    if (demo) {
+      let list = demoEntries().map((entry) => normalizeEntry(entry, { demo: true }))
+      if (filter === 'unread') list = list.filter((entry) => entry.status === 'unread')
+      if (filter === 'starred') list = list.filter((entry) => entry.starred)
+      if (kind === 'category') list = list.filter((entry) => String(entry.categoryId) === resolvedId)
+      if (kind === 'feed') list = list.filter((entry) => String(entry.feedId) === resolvedId)
+      if (query) {
+        const needle = query.toLowerCase()
+        list = list.filter((entry) => `${entry.title} ${entry.excerpt}`.toLowerCase().includes(needle))
+      }
+      all = list
+      total = list.length
+    } else {
+      const client = await miniflux()
+      const status = filter === 'unread' ? 'unread' : ['unread', 'read']
+      const page = await client.entries({
+        status,
+        limit: 100,
+        offset,
+        search: query,
+        categoryId: kind === 'category' ? resolvedId : '',
+        feedId: kind === 'feed' ? resolvedId : '',
+        starred: filter === 'starred' ? true : '',
+        order: 'published_at',
+        direction: 'desc',
+      })
+      all = (page?.entries || []).map((entry) => normalizeEntry(entry))
+      total = Number(page?.total) || all.length
+    }
+    const sample = all.slice(0, 100)
+    const titles = sample.slice(0, limit)
+    const title = kind === 'feed'
+      ? (scope.title || sample[0]?.feedTitle || `Feed ${resolvedId}`)
+      : kind === 'category'
+        ? (scope.title || sample[0]?.categoryTitle || `Category ${resolvedId}`)
+        : 'All articles'
+    const filterLabel = filter === 'starred' ? '收藏' : filter === 'all' ? '全部' : '未读'
+    let range = ''
+    if (sample.length > 0) {
+      const dates = sample.map((entry) => String(entry.publishedAt).slice(0, 10)).sort()
+      range = dates[0] === dates[dates.length - 1] ? dates[0] : `${dates[0]} – ${dates[dates.length - 1]}`
+    }
+    const feedCounts = new Map()
+    for (const entry of sample) feedCounts.set(entry.feedTitle, (feedCounts.get(entry.feedTitle) || 0) + 1)
+    const distribution = [...feedCounts].sort((a, b) => b[1] - a[1]).slice(0, 8)
+      .map(([feed, n]) => `${feed} ${n}`).join(' · ')
+    const lines = [
+      `时间线：${title} · ${filterLabel} · 共 ${total} 条`,
+      `本页：offset ${offset}，返回 ${titles.length} 条（limit=${limit}，样本 ${sample.length} 条）`,
+      range ? `时间范围（样本）：${range}` : '',
+      '',
+      distribution ? `来源分布（样本）：${distribution}` : '',
+      '',
+      '标题：',
+      ...titles.map((entry, index) => `${offset + index + 1}. #${entry.id} ${entryLink(entry.title, entry.url)}（${entry.feedTitle} · ${String(entry.publishedAt).slice(0, 16)}）`),
+      titles.length === 0 ? '（这一页没有条目）' : '',
+      total > offset + titles.length ? `下一页：offset=${offset + titles.length}` : '',
+    ]
+    return lines.filter((line) => line !== '').join('\n')
+  }
+
+  /** Read one file an agent linked, for the panel's own preview. */
+  async function readDigestFile(body = {}) {
+    const filePath = path.resolve(String(body.path || ''))
+    const info = await fsStat(filePath)
+    if (!info.isFile()) throw new HttpError(400, 'not_a_file', 'That path is not a file.')
+    const MAX_FILE = 8 * 1024 * 1024
+    if (info.size > MAX_FILE) throw new HttpError(413, 'too_large', 'That file is too large to preview.')
+    const buffer = await readFile(filePath)
+    const name = path.basename(filePath)
+    const ext = path.extname(name).toLowerCase()
+    const images = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+      '.svg': 'image/svg+xml',
+    }
+    const text = new Set([
+      '.md', '.markdown', '.txt', '.json', '.jsonl', '.yml', '.yaml', '.csv', '.tsv', '.log',
+      '.js', '.mjs', '.ts', '.tsx', '.jsx', '.css', '.html', '.xml', '.toml', '.ini', '.sh',
+      '.py', '.go', '.rs', '.java', '.c', '.h', '.cpp', '.sql',
+    ])
+    if (images[ext]) {
+      return { name, path: filePath, bytes: info.size, kind: 'image', mime: images[ext], base64: buffer.toString('base64') }
+    }
+    if (ext === '.pdf') {
+      return { name, path: filePath, bytes: info.size, kind: 'pdf', mime: 'application/pdf', base64: buffer.toString('base64') }
+    }
+    if (text.has(ext) || !buffer.subarray(0, 4096).includes(0)) {
+      return { name, path: filePath, bytes: info.size, kind: 'text', mime: 'text/plain; charset=utf-8', text: buffer.toString('utf8') }
+    }
+    return { name, path: filePath, bytes: info.size, kind: 'binary', mime: 'application/octet-stream' }
+  }
+
+  /** Open one file with the OS default app (the preview's escape hatch). */
+  async function openDigestFile(body = {}) {
+    const filePath = path.resolve(String(body.path || ''))
+    const info = await fsStat(filePath)
+    if (!info.isFile()) throw new HttpError(400, 'not_a_file', 'That path is not a file.')
+    const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open'
+    await execFileAsync(command, [filePath])
+    return { ok: true, path: filePath }
   }
 
   /** Feeds and categories for the management view. */
@@ -1501,6 +1570,72 @@ export function apply(ctx, config = {}) {
     })
   }
 
+  /**
+   * A POST route that answers as server-sent events. The body is read like
+   * writeRoute; the run callback writes `data: {json}` frames and the response
+   * stays open until it returns (or the client goes away).
+   */
+  function streamRoute(path, methods, run) {
+    return ctx.webServer.register({
+      kind: 'exact',
+      path,
+      handler: async (req, res) => {
+        if (!methods.includes((req.method || 'GET').toUpperCase())) {
+          sendNode(res, 405, { error: { code: 'method_not_allowed', message: `Only ${methods.join(' / ')} is allowed` } })
+          return
+        }
+        const controller = new AbortController()
+        res.on('close', () => {
+          if (!res.writableEnded) controller.abort()
+        })
+        let body = {}
+        try {
+          const chunks = []
+          let size = 0
+          for await (const chunk of req) {
+            size += chunk.length
+            if (size > 1_000_000) throw new HttpError(413, 'too_large', 'Request body too large')
+            chunks.push(chunk)
+          }
+          const text = Buffer.concat(chunks).toString('utf8')
+          if (text) {
+            try {
+              body = JSON.parse(text)
+            } catch {
+              throw new HttpError(400, 'bad_json', 'Request body is not valid JSON')
+            }
+          }
+        } catch (error) {
+          const { status, body: failure } = failureParts(error)
+          sendNode(res, status, failure)
+          return
+        }
+        res.writeHead(200, {
+          'content-type': 'text/event-stream; charset=utf-8',
+          'cache-control': 'no-cache, no-transform',
+          'x-accel-buffering': 'no',
+          connection: 'keep-alive',
+        })
+        if (typeof res.flushHeaders === 'function') res.flushHeaders()
+        const send = (event) => {
+          if (res.writableEnded) return
+          try {
+            res.write(`data: ${JSON.stringify(event)}\n\n`)
+          } catch {
+            // The reader closed the tab; nothing left to tell it.
+          }
+        }
+        try {
+          await run(body, send, controller.signal)
+        } catch (error) {
+          const { body: failure } = failureParts(error)
+          send({ type: 'error', code: failure.error.code, message: failure.error.message })
+        }
+        try { res.end() } catch { /* already closed */ }
+      },
+    })
+  }
+
   async function handleApi(request, peer) {
     if (peer && peer.principal && peer.principal.kind !== 'owner') {
       return json({ error: { code: 'forbidden', message: 'Local user only' } }, 403)
@@ -1953,6 +2088,14 @@ export function apply(ctx, config = {}) {
     'rss-miniflux: briefing route',
   )
   ctx.effect(
+    () => writeRoute(`${PREFIX}/file`, ['POST'], (body, _method, _signal) => readDigestFile(body)),
+    'rss-miniflux: digest file preview route',
+  )
+  ctx.effect(
+    () => writeRoute(`${PREFIX}/open`, ['POST'], (body, _method, _signal) => openDigestFile(body)),
+    'rss-miniflux: digest open-file route',
+  )
+  ctx.effect(
     () => writeRoute(`${PREFIX}/accounts/action`, ['POST'], (body) => handleAccounts(body)),
     'rss-miniflux: accounts route',
   )
@@ -1987,6 +2130,13 @@ export function apply(ctx, config = {}) {
     return `${minutes} 分钟`
   }
 
+  /** Markdown link for a tool result, so recommendations can carry the original URL. */
+  function entryLink(title, url) {
+    const label = String(title || '').replace(/[[\]]/g, '\\$&')
+    const href = String(url || '').trim()
+    return href ? `[${label}](<${href}>)` : label
+  }
+
   function digestText(digest) {
     const lines = []
     const banner = digest.demo ? '（示例数据，未连接 Miniflux）' : ''
@@ -2005,7 +2155,7 @@ export function apply(ctx, config = {}) {
       digest.echoes.forEach((echo, index) => {
         lines.push(`${index + 1}. ${echo.label} — ${echo.size} 篇 / ${echo.feeds.length} 个源 / 约 ${echo.minutes} 分钟`)
         for (const item of echo.items.slice(0, 3)) {
-          lines.push(`   - #${item.id} ${item.title}（${item.feed}，${item.minutes} 分钟）`)
+          lines.push(`   - #${item.id} ${entryLink(item.title, item.url)}（${item.feed}，${item.minutes} 分钟）`)
         }
       })
     } else {
@@ -2014,12 +2164,12 @@ export function apply(ctx, config = {}) {
     lines.push('')
     lines.push('深度阅读推荐（按 篇幅/正文完整度/新鲜度/标题信号/收藏兴趣 打分）：')
     for (const item of digest.recommendations.slice(0, 6)) {
-      lines.push(`- #${item.id} ${item.title}（${item.minutes} 分钟，${item.feed}，分数 ${item.score}）`)
+      lines.push(`- #${item.id} ${entryLink(item.title, item.url)}（${item.minutes} 分钟，${item.feed}，分数 ${item.score}）`)
       if (item.reasons.length) lines.push(`  理由：${item.reasons.join('；')}`)
     }
     if (digest.quickScan.length > 0) {
       lines.push('')
-      lines.push(`碎片时间可扫读：${digest.quickScan.map((item) => `#${item.id} ${item.title}`).join('；')}`)
+      lines.push(`碎片时间可扫读：${digest.quickScan.map((item) => `#${item.id} ${entryLink(item.title, item.url)}`).join('；')}`)
     }
     lines.push('')
     lines.push('用 miniflux_read 读取推荐条目的正文；用 miniflux_act 标记已读或收藏。')
@@ -2070,6 +2220,27 @@ export function apply(ctx, config = {}) {
         limit: Math.min(Math.max(Number(args.limit) || 200, 20), 400),
         force: true,
       })),
+    },
+    {
+      name: 'miniflux_timeline',
+      description:
+        '读取当前 Miniflux 时间线的条目：总数、时间范围、来源分布和一页标题（带 id 和原文 Markdown 链接，可继续 miniflux_read）。kind 为 category/feed 时用 id 或 title 定位；title 解析失败会列出候选分类/订阅源及其 id，直接拿 id 重试。用户问「这一屏/这个时间线讲了什么」或要按当前列表总结时先调用它；用 limit/offset 翻页，不要猜条目；推荐/优先阅读时直接引用标题里的链接。',
+      parameters: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['all', 'category', 'feed'], description: '时间线类型，默认 all' },
+          id: { type: 'number', description: '分类或订阅源 id（有 id 时优先；kind 为 category/feed 时二者至少一个）' },
+          title: { type: 'string', description: '分类或订阅源名称（没有 id 时按名称匹配，取自自然语言提示词）' },
+          filter: { type: 'string', enum: ['unread', 'starred', 'all'], description: '过滤，默认 unread' },
+          query: { type: 'string', description: '搜索词，可空' },
+          limit: { type: 'number', description: '本页返回多少条标题，默认 30，上限 50' },
+          offset: { type: 'number', description: '从第几条开始，默认 0' },
+          demo: { type: 'boolean', description: '使用内置示例数据' },
+        },
+        additionalProperties: false,
+      },
+      output: output(),
+      execute: async (args = {}) => timelineText(args),
     },
     {
       name: 'miniflux_briefing',

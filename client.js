@@ -1335,6 +1335,39 @@ window.__ModuleLoader__.load({
       'a11y.resizeSidebar': 'Resize feeds sidebar',
       'a11y.resizeList': 'Resize article list',
       'list.refresh': 'Refresh',
+      // AI digest: a new session with the timeline as the draft
+      'assistant.title': 'AI digest',
+      'assistant.entry': 'Continue with AI digest',
+      'assistant.newChat': 'New chat',
+      'assistant.close': 'Close',
+      'file.open': 'Open in default app',
+      'file.noPreview': 'This file cannot be previewed here.',
+      'file.loading': 'Loading file…',
+      'assistant.greeting': 'What should we dig into?',
+      'assistant.chipsClear': 'Clear',
+      'assistant.promptTool': 'Use the miniflux_timeline tool to inspect this timeline (kind, title, filter; page with limit/offset). Do not guess entries; each title carries its original link, so link the entries you recommend; use miniflux_read for a full article.',
+      'assistant.promptClose': 'Answer in the language most entries use.',
+      'assistant.sidebarFailed': 'Could not open the link in the session sidebar.',
+      'chip.summary': 'What came in?',
+      'chip.slow': '3 worth a slow read',
+      'chip.threads': 'Group by thread',
+      'chip.changes': 'What changed this week?',
+      'chip.feeds': 'Feeds worth following',
+      'chip.starred': 'Starred only',
+      'chip.unread': 'Unread only',
+      'chip.all': 'Everything',
+      'fragment.summary': 'Summarize what came in, group the threads, and point out what is worth reading first.',
+      'fragment.slow': 'Pick 3 entries worth a slow read and explain why each one.',
+      'fragment.threads': 'Group these entries into threads and flag where multiple feeds echo the same story.',
+      'fragment.changes': 'What changed or repeated compared with the previous week?',
+      'fragment.feeds': 'Recommend a few RSSHub feeds worth following based on this timeline, with reasons.',
+      'fragment.starred': 'Consider only starred entries.',
+      'fragment.unread': 'Consider only unread entries.',
+      'fragment.all': 'Consider all entries, read and unread.',
+      'assistant.preparing': 'Preparing…',
+      'assistant.noSession': 'Starting a session is not available here.',
+      'assistant.failed': 'Could not prepare the digest.',
+      'assistant.emptyList': 'Nothing in this list to talk about yet.',
       'reader.pick': 'Pick an entry to start reading',
       'reader.loading': 'Opening…',
       'reader.original': 'Open in browser',
@@ -1655,6 +1688,39 @@ window.__ModuleLoader__.load({
       "a11y.resizeSidebar": "调整订阅栏宽度",
       "a11y.resizeList": "调整文章列表宽度",
       "list.refresh": "刷新",
+      // AI 摘要：用当前时间线作为草稿发起一个新会话
+      "assistant.title": "AI 摘要",
+      "assistant.entry": "继续 AI 摘要",
+      "assistant.newChat": "新对话",
+      "assistant.close": "关闭",
+      "file.open": "用默认应用打开",
+      "file.noPreview": "这个文件无法在面板里预览。",
+      "file.loading": "正在读取文件…",
+      "assistant.greeting": "想了解什么？",
+      "assistant.chipsClear": "清空",
+      "assistant.promptTool": "用 miniflux_timeline 工具读取这条时间线（kind、title、filter；用 limit/offset 翻页），不要猜条目；每行标题自带原文链接，推荐条目时请带上链接；需要正文时用 miniflux_read。",
+      "assistant.promptClose": "用这屏条目最多的语言回答。",
+      "assistant.sidebarFailed": "无法在 session 右侧栏打开这个链接。",
+      "chip.summary": "这屏来了什么？",
+      "chip.slow": "挑 3 篇慢读",
+      "chip.threads": "按主题归组",
+      "chip.changes": "这周有什么变化？",
+      "chip.feeds": "推荐 RSSHub 源",
+      "chip.starred": "只看收藏",
+      "chip.unread": "只看未读",
+      "chip.all": "全部",
+      "fragment.summary": "总结这屏来了什么，按线索归组，指出最值得先读的。",
+      "fragment.slow": "挑 3 篇最值得慢读的，逐篇说明理由。",
+      "fragment.threads": "把这些条目按主题/事件归组，标出多来源呼应的线索。",
+      "fragment.changes": "和上周相比，这屏里有什么新变化或反复出现的主题？",
+      "fragment.feeds": "根据这屏的内容，推荐几个值得订阅的 RSSHub 源，并说明理由。",
+      "fragment.starred": "只看收藏的条目。",
+      "fragment.unread": "只看未读的条目。",
+      "fragment.all": "含已读和未读的条目都考虑。",
+      "assistant.preparing": "准备中…",
+      "assistant.noSession": "这里无法发起会话。",
+      "assistant.failed": "没能准备 AI 摘要。",
+      "assistant.emptyList": "这个列表还没有可以聊的文章。",
       "reader.pick": "选一篇文章开始阅读",
       "reader.loading": "正在打开…",
       "reader.original": "在浏览器中打开",
@@ -1717,6 +1783,222 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------------------------------
     // Utilities
     // ---------------------------------------------------------------------
+
+    /** A short scope line under the greeting: title + the current filter count. */
+    function digestScopeLine(locale, { title, filter, count }) {
+      const safe = String(title || '').replace(/@/g, '＠')
+      const n = Number(count) || 0
+      if (locale === 'zh') {
+        return filter === 'starred' ? `${safe} · ${n} 条收藏` : filter === 'all' ? `${safe} · 共 ${n} 条` : `${safe} · ${n} 条未读`
+      }
+      return filter === 'starred' ? `${safe} · ${n} starred` : filter === 'all' ? `${safe} · ${n} articles` : `${safe} · ${n} unread`
+    }
+
+    /** Natural-language context for the prompt builder (no raw scope syntax). */
+    function digestPromptHead(locale, { title, kind, filter, query, count }) {
+      const safeTitle = String(title || '').replace(/@/g, '＠')
+      const safeQuery = String(query || '').replace(/@/g, '＠')
+      if (locale === 'zh') {
+        const scope = kind === 'feed' ? `订阅源「${safeTitle}」` : kind === 'category' ? `分类「${safeTitle}」` : '全部订阅'
+        const only = filter === 'unread' ? '只看未读' : filter === 'starred' ? '只看收藏' : '含已读和未读'
+        return `这是我的 Miniflux 时间线${scope}，${only}，共 ${count} 条${safeQuery ? `，搜索「${safeQuery}」` : ''}。`
+      }
+      const scope = kind === 'feed' ? `the “${safeTitle}” feed` : kind === 'category' ? `the “${safeTitle}” category` : 'all subscriptions'
+      const only = filter === 'unread' ? 'unread entries' : filter === 'starred' ? 'starred entries' : 'read and unread entries'
+      return `This is my Miniflux timeline “${safeTitle}” — ${scope}, ${only}, ${count} in total${safeQuery ? `, searched for “${safeQuery}”` : ''}.`
+    }
+
+    /**
+     * The digest session that owns the current column. File links in its answers
+     * belong to it, and the shell's right sidebar cannot mount a surface for an
+     * embedded session, so the panel previews those files itself.
+     */
+    const DIGEST_OPEN = { sessionId: '', workspacePath: '', show: null }
+    /** Session navigation for links/files clicked inside the embedded digest. */
+    const DIGEST_NAV = { openSession: null, openResource: null, openExternal: null }
+    const DIGEST_RESUME_KEY = 'rss-miniflux:digest-resume:v1'
+
+    function readDigestResume() {
+      try {
+        const raw = typeof localStorage === 'undefined' ? '' : localStorage.getItem(DIGEST_RESUME_KEY)
+        return raw ? JSON.parse(raw) : null
+      } catch { return null }
+    }
+
+    function writeDigestResume(record) {
+      try {
+        if (typeof localStorage !== 'undefined') localStorage.setItem(DIGEST_RESUME_KEY, JSON.stringify(record))
+      } catch { /* storage may be unavailable */ }
+    }
+
+    function clearDigestResume() {
+      try {
+        if (typeof localStorage !== 'undefined') localStorage.removeItem(DIGEST_RESUME_KEY)
+      } catch { /* storage may be unavailable */ }
+    }
+
+    async function openWhenReady(url) {
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        if (typeof DIGEST_NAV.openResource !== 'function') return false
+        try {
+          await DIGEST_NAV.openResource(url)
+          return true
+        } catch (error) {
+          if (!/session surface/i.test(String(error?.message || ''))) return false
+          await new Promise((resolve) => setTimeout(resolve, 100))
+        }
+      }
+      return false
+    }
+
+    async function openWithSession(sessionId, url) {
+      try {
+        await Promise.resolve(DIGEST_NAV.openSession?.(sessionId)).catch(() => {})
+      } catch { /* the session may already be active */ }
+      return openWhenReady(url)
+    }
+
+    async function openExternalWithSession(sessionId, url) {
+      try {
+        await Promise.resolve(DIGEST_NAV.openSession?.(sessionId)).catch(() => {})
+      } catch { /* the session may already be active */ }
+      if (typeof DIGEST_NAV.openExternal !== 'function') return false
+      return DIGEST_NAV.openExternal(url)
+    }
+    /** The native conversation reports whether it is still empty. */
+    const DIGEST_STATE = { empty: true, onState: null }
+
+    /** `dsh-resource://file/session/<sessionId>/<path>` → its parts. */
+    function parseDigestFileAddress(value) {
+      const match = /^dsh-resource:\/\/file\/session\/([^/]+)\/(.*)$/i.exec(String(value || ''))
+      if (!match) return undefined
+      try {
+        const path = match[2].split('/').map((segment) => decodeURIComponent(segment)).join('/')
+        return { sessionId: decodeURIComponent(match[1]), path }
+      } catch {
+        return undefined
+      }
+    }
+
+    /**
+     * The shell's native conversation, borrowed for the AI digest column:
+     * create/retain a session and hand its reference to SessionProvider, which
+     * renders the real conversation (messages + the DSH composer). The timeline
+     * prompt is only placed in the composer as a draft; nothing is sent here.
+     */
+    function nativeChatBridge(ctx) {
+      let scope
+      if (typeof ctx?.inject === 'function') {
+        ctx.inject(['sessions', 'uiSession', 'uiWorkspace'], (child) => {
+          scope = child
+          return () => {
+            scope = undefined
+          }
+        })
+      }
+      const ready = () => {
+        if (!scope) throw new Error('Harness 对话服务尚未就绪，请稍后再试')
+        return scope
+      }
+      const waitForDraft = (input, prompt) => new Promise((resolve, reject) => {
+        if (input.getSnapshot().draft === prompt) {
+          resolve()
+          return
+        }
+        const timeout = setTimeout(() => {
+          unsubscribe()
+          reject(new Error('提示词已放入输入框，请手动发送'))
+        }, 1200)
+        const unsubscribe = input.subscribe(() => {
+          if (input.getSnapshot().draft === prompt) {
+            clearTimeout(timeout)
+            unsubscribe()
+            resolve()
+          }
+        })
+        if (input.getSnapshot().draft === prompt) {
+          clearTimeout(timeout)
+          unsubscribe()
+          resolve()
+        }
+      })
+      return {
+        defaultChatWorkspace() {
+          const items = scope?.uiWorkspace.workspaces.list.getSnapshot().items ?? []
+          const preferred = items.find((workspace) => workspace.title === 'default-workspace'
+            || /(?:^|\/)default-workspace$/.test(workspace.path || ''))
+          return (preferred ?? items[0])?.workspaceId
+        },
+        /** The workspace folder, so the Host can drop the large-timeline file. */
+        workspacePath(workspaceId) {
+          const items = scope?.uiWorkspace.workspaces.list.getSnapshot().items ?? []
+          return items.find((workspace) => workspace.workspaceId === workspaceId)?.path || ''
+        },
+        async openChat({ workspaceId, sessionId }) {
+          const active = ready()
+          if (workspaceId && !active.uiWorkspace.workspaces.list.getSnapshot().items.some((workspace) => workspace.workspaceId === workspaceId)) {
+            throw new Error('请选择工作区')
+          }
+          const id = sessionId || await active.sessions.create({ workspaceId })
+          const reference = active.sessions.retain(id, { source: 'rss-miniflux' })
+          try {
+            const source = active.uiSession.bindingSource(reference)
+            if (typeof source.value.props.inputActions?.setDraft !== 'function') {
+              throw new Error('当前 Harness 版本不支持原生伴读')
+            }
+            return {
+              sessionId: id,
+              reference,
+              release: () => reference.release(),
+              getDraft() {
+                return source.value.hooks?.input?.getSnapshot?.().draft || ''
+              },
+              async replaceDraft(prompt) {
+                const { input } = source.value.hooks ?? {}
+                const actions = source.value.props.inputActions
+                if (typeof input?.getSnapshot !== 'function') throw new Error('当前 Harness 版本不支持原生输入框')
+                const state = input.getSnapshot()
+                if (state.phase !== 'plain') throw new Error('输入框正在处理消息，请稍后再试')
+                actions.setDraft(prompt)
+                await waitForDraft(input, prompt)
+              },
+            }
+          } catch (error) {
+            reference.release()
+            throw error
+          }
+        },
+      }
+    }
+
+    /** The native conversation's chat view, rendered inside our session scope. */
+    function NativeChatView({ renderSlot }) {
+      return renderSlot('conversation.session', { view: 'chat' })
+    }
+
+    /**
+     * The native conversation content (messages plus the DSH composer) for the
+     * session SessionProvider supplies. useSession/useConversation/useSessions/
+     * renderFactorySlot are injected by the session-scoped child slot.
+     */
+    function NativeDigestConversation({ useSession, renderFactorySlot }) {
+      const session = useSession((state) => state)
+      const empty = Boolean(session?.blank ?? true) || Boolean(session?.awaitingFirstTurn)
+      // Publish before the parent's wiring effect runs; that effect may run
+      // after this child's effect, so the callback alone can miss the first value.
+      DIGEST_STATE.empty = empty
+      useEffect(() => {
+        DIGEST_STATE.onState?.({ empty })
+        return () => { DIGEST_STATE.onState?.({ empty: true }) }
+      }, [empty])
+      // Blank sessions still use the native hero composer so the workspace
+      // picker stays available; only the hero headline is hidden by CSS.
+      return renderFactorySlot(
+        'conversation.content',
+        { variant: 'embedded', phase: 'active', hero: empty },
+        { slots: { views: NativeChatView } },
+      )
+    }
 
     async function callApi(path, options = {}) {
       const init = { method: options.method || 'GET', headers: {}, credentials: 'same-origin' }
@@ -2244,7 +2526,45 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
 @media (prefers-reduced-motion:reduce){.mrss-skel-row,.mrss-skel-avatar{animation:none;opacity:.7}}
 .mrss-reader > .mrss-center{animation:mrss-fade .16s ease-out both}
 .mrss-void{display:flex;flex-direction:column;align-items:center;gap:10px;animation:mrss-void-in .22s ease-out both}
-.mrss-void-icon{opacity:.45}
+.mrss-ai-entry{display:inline-flex;align-items:center;gap:6px;margin-top:2px;padding:5px 11px;border:1px solid var(--dsw-alias-border-l1);border-radius:999px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);font:inherit;font-size:12.5px;line-height:1.5;cursor:pointer}
+.mrss-ai-entry .mrss-icon{color:var(--dsw-alias-label-secondary)}
+.mrss-ai-entry:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l3)}
+.mrss-ai-entry:hover .mrss-icon{color:var(--dsw-alias-label-primary)}
+.mrss-ai-entry:disabled{opacity:.6;cursor:default}
+.mrss-digest-view{flex:1;min-height:0;display:flex;flex-direction:column;background:var(--dsw-alias-bg-base)}
+.mrss-digest-bar{flex:none;display:flex;align-items:center;gap:8px;padding:10px 18px;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.mrss-digest-title{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary)}
+.mrss-whale{flex:none}
+.mrss-digest-actions{display:flex;align-items:center;gap:2px;margin-left:auto}
+.mrss-digest-native [class*="composerHero"] > :first-child{display:none!important}
+.mrss-digest-native{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.mrss-digest-native > *{flex:1;min-height:0}
+.mrss-digest-fallback{display:flex;align-items:center;justify-content:center;padding:32px;color:var(--dsw-alias-label-secondary);font-size:13px;text-align:center}
+.mrss-file-layer{position:absolute;inset:0;z-index:8;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,.28)}
+.mrss-file-view{width:min(860px,100%);max-height:100%;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;background:var(--dsw-alias-bg-layer-1);box-shadow:0 18px 48px rgba(0,0,0,.24)}
+.mrss-file-head{flex:none;display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.mrss-file-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600}
+.mrss-file-actions{display:flex;align-items:center;gap:2px}
+.mrss-file-body{flex:1;min-height:0;overflow:auto;background:var(--dsw-alias-bg-base)}
+.mrss-file-text{margin:0;padding:16px 18px;font:12.5px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--dsw-alias-label-primary)}
+.mrss-file-image{display:block;box-sizing:border-box;max-width:100%;max-height:70vh;margin:0 auto;padding:16px}
+.mrss-file-pdf{width:100%;height:72vh;border:0;background:#fff}
+.mrss-file-state{padding:40px 24px;text-align:center;font-size:13px;color:var(--dsw-alias-label-secondary)}
+.mrss-digest-empty{position:absolute;left:0;right:0;top:0;display:flex;align-items:center;justify-content:center;padding:24px 24px 16px;pointer-events:none;z-index:1}
+.mrss-digest-empty-inner{display:flex;flex-direction:column;align-items:center;gap:10px;width:100%;max-width:720px;text-align:center;pointer-events:auto}
+.mrss-digest-greeting{font-size:20px;font-weight:600;line-height:1.35;color:var(--dsw-alias-label-primary)}
+.mrss-digest-sub{font-size:12.5px;color:var(--dsw-alias-label-secondary)}
+.mrss-chip-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.mrss-digest-empty .mrss-chip-row{justify-content:center}
+.mrss-digest-art{display:flex;justify-content:center;color:var(--dsw-alias-label-secondary);margin-bottom:2px}
+.mrss-digest-art-svg{display:block}
+.mrss-chips-clear-row{display:flex;justify-content:center;width:100%;margin-top:2px}
+.mrss-chip-scopes{margin-top:-2px}
+.mrss-chip{padding:3px 9px;border:1px solid var(--dsw-alias-border-l1);border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11.5px;line-height:1.5;cursor:pointer;white-space:nowrap}
+.mrss-chip:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l3)}
+.mrss-chip[data-on="true"]{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-brand-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 8%,transparent)}
+.mrss-chips-clear{padding:3px 4px;border:0;background:none;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;cursor:pointer;text-decoration:underline}
+.mrss-void-icon{width:40px;height:40px;opacity:.55}
 @keyframes mrss-void-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .mrss-manage{position:absolute;inset:0;z-index:12;display:flex;background:color-mix(in srgb,#000 22%,transparent)}
 .mrss-manage-card{margin:auto;width:min(880px,94%);max-height:88%;display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.28);overflow:hidden}
@@ -2438,6 +2758,7 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
       plus: ['M12 5v14', 'M5 12h14'],
       share: ['M12 15V4', 'M8 8l4-4 4 4', 'M5 14v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5'],
       inbox: ['M4 13l2.2-7.2A1 1 0 0 1 7.2 5h9.6a1 1 0 0 1 1 .8L20 13', 'M4 13h4.5l1.2 2.2h4.6L15.5 13H20v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-5z'],
+      send: ['M21 3L3 10.5l7 3 3 7L21 3z', 'M10 13.5L21 3'],
     }
 
     // Category icons from Lucide (https://lucide.dev, ISC licence).
@@ -2655,6 +2976,65 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
       'triangle-alert',
     ]
 
+    // Official DeepSeek whale mark (Simple Icons, CC0).
+    const DEEPSEEK_LOGO = `<path d="M23.748 4.651c-.254-.124-.364.113-.512.233-.051.04-.094.09-.137.137-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.155-.708-.311-.955-.65-.172-.24-.219-.509-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.094.172.187.129.323-.082.28-.18.553-.266.833-.055.179-.137.218-.328.14a5.5 5.5 0 0 1-1.737-1.179c-.857-.828-1.631-1.743-2.597-2.46a12 12 0 0 0-.689-.47c-.985-.957.13-1.743.387-1.836.27-.098.094-.433-.778-.428-.872.003-1.67.295-2.687.685a3 3 0 0 1-.465.136 9.6 9.6 0 0 0-2.883-.101c-1.885.21-3.39 1.1-4.497 2.622C.082 8.776-.231 10.854.152 13.02c.403 2.284 1.568 4.175 3.36 5.653 1.857 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.132-.284 4.994-1.86.47.234.962.328 1.78.398.629.058 1.235-.031 1.705-.129.735-.155.684-.836.418-.961-2.155-1.004-1.682-.595-2.112-.926 1.095-1.295 2.768-3.598 3.284-6.733.05-.346.115-.834.108-1.114-.004-.171.035-.238.23-.257a4.2 4.2 0 0 0 1.545-.475c1.397-.763 1.96-2.016 2.093-3.517.02-.23-.004-.467-.247-.588M11.58 18.168c-2.088-1.642-3.101-2.183-3.52-2.16-.39.024-.32.472-.234.763.09.288.207.487.371.74.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.168-1.361-.801-2.5-1.86-3.301-3.306-.775-1.393-1.225-2.888-1.299-4.482-.02-.385.094-.522.477-.592a4.7 4.7 0 0 1 1.53-.038c2.131.311 3.946 1.264 5.467 2.774.868.86 1.525 1.887 2.202 2.89.72 1.066 1.494 2.082 2.48 2.915.348.291.626.513.892.677-.802.09-2.14.109-3.055-.615zm1.001-6.44a.306.306 0 0 1 .415-.287.3.3 0 0 1 .113.074.3.3 0 0 1 .086.214c0 .17-.136.307-.308.307a.303.303 0 0 1-.306-.307m3.11 1.596c-.2.081-.4.151-.591.16a1.25 1.25 0 0 1-.798-.254c-.274-.23-.47-.358-.551-.758a1.7 1.7 0 0 1 .015-.588c.07-.327-.007-.537-.238-.727-.188-.156-.426-.199-.689-.199a.6.6 0 0 1-.254-.078.253.253 0 0 1-.114-.358 1 1 0 0 1 .192-.21c.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.392.451.462.576.685.915.176.264.336.536.446.848.066.194-.02.353-.25.45"/>`
+
+    function WhaleMark({ size = 16, className = 'mrss-icon mrss-whale' }) {
+      return h('svg', {
+        className,
+        width: size,
+        height: size,
+        viewBox: '0 0 24 24',
+        fill: 'currentColor',
+        'aria-hidden': true,
+        dangerouslySetInnerHTML: { __html: DEEPSEEK_LOGO },
+      })
+    }
+
+    /** A small editorial illustration above the digest greeting. */
+    function DigestArt() {
+      return h('svg', {
+        className: 'mrss-digest-art-svg',
+        width: 128,
+        height: 86,
+        viewBox: '0 0 120 84',
+        fill: 'none',
+        'aria-hidden': true,
+      },
+      h('circle', { cx: 60, cy: 42, r: 31, fill: 'currentColor', opacity: 0.055 }),
+      h('path', {
+        d: 'M38 36c8-5 16-6 22-3 6-3 14-2 22 3v24c-8-5-16-6-22-3-6-3-14-2-22 3V36Z',
+        fill: 'var(--dsw-alias-bg-layer-1)',
+        stroke: 'currentColor',
+        strokeWidth: 1.5,
+        strokeLinejoin: 'round',
+      }),
+      h('path', { d: 'M60 33v27', stroke: 'currentColor', strokeWidth: 1.5 }),
+      h('path', { d: 'M44 44h10M44 50h10M66 44h10M66 50h10', stroke: 'currentColor', strokeWidth: 1.3, strokeLinecap: 'round', opacity: 0.5 }),
+      h('path', {
+        d: 'M78 35v13l-5-3-5 3V35',
+        style: { fill: 'var(--dsw-alias-brand-primary)' },
+        opacity: 0.9,
+      }),
+      h('path', {
+        d: 'M30 23l1.7 4.6L36 29.3l-4.3 1.7L30 35.6l-1.7-4.6L24 29.3l4.3-1.7L30 23Z',
+        style: { fill: 'var(--dsw-alias-brand-primary)' },
+        opacity: 0.9,
+      }),
+      h('path', {
+        d: 'M94 57l1.2 3.2 3.2 1.2-3.2 1.2L94 65.8l-1.2-3.2-3.2-1.2 3.2-1.2L94 57Z',
+        fill: 'currentColor',
+        opacity: 0.4,
+      }),
+      h('path', {
+        d: 'M32 69c6-4 12-4 18 0s12 4 18 0 12-4 18 0',
+        stroke: 'currentColor',
+        strokeWidth: 1.5,
+        strokeLinecap: 'round',
+        opacity: 0.3,
+      }))
+    }
+
     function Icon({ name, size = 16, className = 'mrss-icon', filled = false }) {
       const lucide = LUCIDE_ICONS[name]
       if (lucide) {
@@ -2827,11 +3207,32 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
       }
     }
 
+    /**
+     * The empty article page stays exactly as it was; the AI digest is a second
+     * entry below it. It opens a new DSH session with the timeline as the draft.
+     */
+    function AssistantEntry({ t, busy, onOpen }) {
+      return h('div', { className: 'mrss-center' },
+        h('div', { className: 'mrss-void' },
+          h(Icon, { name: 'book-open', size: 40, className: 'mrss-icon mrss-void-icon' }),
+          h('span', null, t('reader.pick')),
+          h('button', {
+            type: 'button',
+            className: 'mrss-ai-entry',
+            onClick: onOpen,
+            disabled: busy,
+          },
+          h(WhaleMark, { size: 15 }),
+          h('span', null, busy ? t('assistant.preparing') : t('assistant.entry'))),
+        ),
+      )
+    }
+
     // ---------------------------------------------------------------------
     // Panel
     // ---------------------------------------------------------------------
 
-    function Panel() {
+    function Panel({ SessionProvider, renderSlot, chat }) {
       const [boot, setBoot] = useState(PANEL_CACHE.boot)
       // The latest adopted catalog, readable from callbacks that never re-bind.
       const bootRef = useRef(PANEL_CACHE.boot)
@@ -2852,8 +3253,18 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
       const [showAccounts, setShowAccounts] = useState(false)
       const [accountsFocus, setAccountsFocus] = useState('')
       const [showAddFeed, setShowAddFeed] = useState(false)
+      // Prefilled by an RSSHub card in the assistant; cleared when the dialog closes.
+      const [addFeedSeed, setAddFeedSeed] = useState('')
       const [feedStats, setFeedStats] = useState(null)
       const [starredEpoch, setStarredEpoch] = useState(0)
+      const [digestBusy, setDigestBusy] = useState(false)
+      const [digest, setDigest] = useState(null)
+      const [fileView, setFileView] = useState(null)
+      const [chips, setChips] = useState([])
+      const [digestEmpty, setDigestEmpty] = useState(true)
+      const [composerSpace, setComposerSpace] = useState(180)
+      const digestRoot = useRef(null)
+      const digestRef = useRef(null)
       // False until the panel's first commit: the very first paint must not
       // animate, or a warm start would fade content the snapshot already had.
       const [entered, setEntered] = useState(false)
@@ -3686,6 +4097,307 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         return list
       }, [entries, scope])
 
+      // The list header, the conversation header and the assistant payload all
+      // name the same scope; compute it once, before the callbacks that close
+      // over it.
+      const scopeTitle = scope.title
+        || (scope.kind === 'all' ? t('nav.list') : t('nav.unread'))
+
+      /**
+       * The entry hands the current timeline to a new DSH session: the Host
+       * builds the draft (title, count, every title) and uiWorkspace opens the
+       * native composer with it. Nothing is sent; the reader reviews it first.
+       */
+      /** Read one linked file and show it in the panel's own preview. */
+      const showDigestFile = useCallback(async (file) => {
+        if (!file?.path) return
+        const root = DIGEST_OPEN.workspacePath
+        const absolute = file.path.startsWith('/')
+          ? file.path
+          : `${String(root).replace(/\/+$/, '')}/${file.path.replace(/^\.?\//, '')}`
+        setFileView({ loading: true, path: absolute, name: absolute.split('/').pop() })
+        const result = await callApi('/file', { method: 'POST', body: { path: absolute } })
+        if (!result.ok) {
+          setFileView(null)
+          notify(result.error?.message || t('assistant.failed'))
+          return
+        }
+        setFileView({ ...result.data, loading: false })
+      }, [notify, t])
+
+      const openExternally = useCallback(async (filePath) => {
+        const result = await callApi('/open', { method: 'POST', body: { path: filePath } })
+        if (!result.ok) notify(result.error?.message || t('assistant.failed'))
+      }, [notify, t])
+
+      useEffect(() => {
+        DIGEST_OPEN.show = digest ? showDigestFile : null
+        return () => {
+          if (DIGEST_OPEN.show === showDigestFile) DIGEST_OPEN.show = null
+        }
+      }, [digest, showDigestFile])
+
+      const currentScopeKey = `${scope.kind}:${scope.id ?? ''}:${filter}:${debounced}`
+      const resumeOnce = useRef(false)
+
+      const CHIP_KEYS = ['summary', 'slow', 'threads', 'changes', 'feeds', 'starred', 'unread', 'all']
+      const SCOPE_KEYS = ['starred', 'unread', 'all']
+
+      /** Build the whole prompt for the selected chips; the reader can edit it. */
+      const promptFor = useCallback((keys) => {
+        const count = listInfo.total || visibleEntries.length
+        const head = digestPromptHead(localeKey, {
+          title: scopeTitle,
+          kind: scope.kind,
+          filter,
+          query: debounced,
+          count,
+        })
+        const parts = keys.map((key) => t(`fragment.${key}`))
+        return [
+          head,
+          '',
+          t('assistant.promptTool'),
+          '',
+          ...parts,
+          '',
+          t('assistant.promptClose'),
+        ].join('\n')
+      }, [debounced, filter, listInfo.total, localeKey, scope.kind, scopeTitle, t, visibleEntries.length])
+
+      const applyPrompt = useCallback((keys) => {
+        const text = keys.length > 0 ? promptFor(keys) : ''
+        const opened = digestRef.current
+        if (!opened?.replaceDraft) return
+        void opened.replaceDraft(text).catch((error) => notify(error?.message || t('assistant.failed')))
+      }, [notify, promptFor, t])
+
+      const toggleChip = useCallback((key) => {
+        setChips((current) => {
+          const isScope = SCOPE_KEYS.includes(key)
+          let next
+          if (isScope) {
+            next = current.includes(key)
+              ? current.filter((entry) => entry !== key)
+              : [...current.filter((entry) => !SCOPE_KEYS.includes(entry)), key]
+          } else {
+            next = current.includes(key)
+              ? current.filter((entry) => entry !== key)
+              : [...current, key]
+          }
+          applyPrompt(next)
+          return next
+        })
+      }, [applyPrompt])
+
+      // The greeting and chips live in the blank area above the composer,
+      // never inside it. Measure the composer card so the block centres in the
+      // free space and stops short of the input.
+      useEffect(() => {
+        if (!digest) return undefined
+        const root = digestRoot.current
+        if (!root) return undefined
+        const measure = () => {
+          const stack = root.querySelector('[class*="composerStack"]')
+          const card = root.querySelector('[data-composer-card]')
+          const source = stack || card
+          const height = source ? source.getBoundingClientRect().height : 0
+          if (height > 0) setComposerSpace(Math.round(height) + 18)
+          // Safety net for a resumed session: once a transcript turn is in the
+          // DOM the empty hero must never overlap it.
+          if (root.querySelector('[data-chat-flow-kind="user"]')) setDigestEmpty(false)
+        }
+        measure()
+        const observer = new MutationObserver(measure)
+        observer.observe(root, { childList: true, subtree: true })
+        let resize
+        const card = root.querySelector('[data-composer-card]')
+        if (typeof ResizeObserver === 'function' && card) {
+          resize = new ResizeObserver(measure)
+          resize.observe(card)
+        }
+        return () => {
+          observer.disconnect()
+          resize?.disconnect()
+        }
+      }, [digest])
+
+      // Links in the embedded conversation also jump to the session's own
+      // interface; the chat's default opener needs a mounted session surface.
+      useEffect(() => {
+        if (!digest) return undefined
+        const root = digestRoot.current
+        if (!root) return undefined
+        const onClick = (event) => {
+          if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+          const target = event.target
+          const anchor = target && typeof target.closest === 'function' ? target.closest('a[href]') : null
+          if (!anchor) return
+          const href = anchor.getAttribute('href') || ''
+          if (!/^https?:/i.test(href)) return
+          event.preventDefault()
+          event.stopPropagation()
+          void (async () => {
+            const opened = await openExternalWithSession(DIGEST_OPEN.sessionId, href)
+            if (!opened) notify(t('assistant.sidebarFailed'))
+          })()
+        }
+        root.addEventListener('click', onClick, true)
+        return () => root.removeEventListener('click', onClick, true)
+      }, [digest])
+
+      useEffect(() => {
+        DIGEST_STATE.onState = ({ empty }) => setDigestEmpty(empty)
+        setDigestEmpty(DIGEST_STATE.empty)
+        return () => { DIGEST_STATE.onState = null }
+      }, [digest])
+
+      // Returning to the plugin resumes the same digest session (the native
+      // session keeps its history; this restores the embedded view around it).
+      useEffect(() => {
+        if (resumeOnce.current || digest || !chat) return undefined
+        const saved = readDigestResume()
+        if (!saved?.sessionId || saved.scopeKey !== currentScopeKey) return undefined
+        resumeOnce.current = true
+        let cancelled = false
+        void (async () => {
+          try {
+            const opened = await chat.openChat({ sessionId: saved.sessionId })
+            if (cancelled) { opened.release(); return }
+            DIGEST_OPEN.sessionId = opened.sessionId
+            DIGEST_OPEN.workspacePath = saved.workspacePath || ''
+            digestRef.current = opened
+            setChips(Array.isArray(saved.chips) ? saved.chips : [])
+            setDigestEmpty(true)
+            setDigest(opened)
+          } catch {
+            clearDigestResume()
+          }
+        })()
+        return () => { cancelled = true }
+      }, [chat, currentScopeKey, digest])
+
+      // Remember the selected chips for the resumed session.
+      useEffect(() => {
+        if (!digestRef.current) return
+        const record = readDigestResume()
+        if (!record || record.sessionId !== DIGEST_OPEN.sessionId) return
+        if (JSON.stringify(record.chips || []) === JSON.stringify(chips)) return
+        writeDigestResume({ ...record, chips })
+      }, [chips])
+
+      /** Drop the retained session reference and return to the article view. */
+      const closeDigest = useCallback((forget = false) => {
+        const current = digestRef.current
+        digestRef.current = null
+        DIGEST_OPEN.sessionId = ''
+        DIGEST_OPEN.workspacePath = ''
+        DIGEST_OPEN.show = null
+        setFileView(null)
+        setChips([])
+        setDigestEmpty(true)
+        setDigest(null)
+        if (forget) clearDigestResume()
+        try { current?.release?.() } catch { /* the shell may have closed it */ }
+      }, [])
+
+      /**
+       * The entry opens a native DSH conversation in this column: create a
+       * session, put the timeline draft into its composer, then render the real
+       * conversation through SessionProvider. Nothing is sent.
+       */
+      const openDigest = useCallback(async () => {
+        if (digestBusy) return
+        if (!chat || typeof chat.openChat !== 'function') {
+          notify(t('assistant.noSession'))
+          return
+        }
+        const workspaceId = chat.defaultChatWorkspace()
+        if (!workspaceId) {
+          notify(t('assistant.noSession'))
+          return
+        }
+        setDigestBusy(true)
+        let opened = null
+        try {
+          const saved = readDigestResume()
+          const reuse = saved && saved.sessionId && saved.scopeKey === currentScopeKey ? saved : null
+          try {
+            opened = await chat.openChat(reuse ? { sessionId: reuse.sessionId } : { workspaceId })
+          } catch (error) {
+            if (!reuse) throw error
+            clearDigestResume()
+            opened = await chat.openChat({ workspaceId })
+          }
+          DIGEST_OPEN.sessionId = opened.sessionId
+          DIGEST_OPEN.workspacePath = reuse?.workspacePath || chat.workspacePath?.(workspaceId) || ''
+          digestRef.current = opened
+          resumeOnce.current = true
+          const restoredChips = reuse && Array.isArray(reuse.chips) ? reuse.chips : []
+          setChips(restoredChips)
+          setDigestEmpty(true)
+          setDigest(opened)
+          writeDigestResume({
+            sessionId: opened.sessionId,
+            scopeKey: currentScopeKey,
+            chips: restoredChips,
+            workspacePath: DIGEST_OPEN.workspacePath,
+          })
+          opened = null
+        } catch (error) {
+          opened?.release?.()
+          notify(error?.message || t('assistant.failed'))
+        } finally {
+          setDigestBusy(false)
+        }
+      }, [chat, currentScopeKey, digestBusy, notify, t])
+
+      /** New chat: a fresh native session with the same timeline draft. */
+      const newDigest = useCallback(async () => {
+        if (!chat || digestBusy) return
+        const workspaceId = chat.defaultChatWorkspace()
+        if (!workspaceId) return
+        const previous = digestRef.current
+        digestRef.current = null
+        setDigest(null)
+        try { previous?.release?.() } catch { /* already gone */ }
+        setDigestBusy(true)
+        let opened = null
+        try {
+          opened = await chat.openChat({ workspaceId })
+          DIGEST_OPEN.sessionId = opened.sessionId
+          DIGEST_OPEN.workspacePath = chat.workspacePath?.(workspaceId) || DIGEST_OPEN.workspacePath
+          digestRef.current = opened
+          resumeOnce.current = true
+          setDigestEmpty(true)
+          setDigest(opened)
+          writeDigestResume({
+            sessionId: opened.sessionId,
+            scopeKey: currentScopeKey,
+            chips: [],
+            workspacePath: DIGEST_OPEN.workspacePath,
+          })
+          opened = null
+        } catch (error) {
+          opened?.release?.()
+          notify(error?.message || t('assistant.failed'))
+        } finally {
+          setDigestBusy(false)
+        }
+      }, [chat, currentScopeKey, digestBusy, notify, t])
+
+      // The digest belongs to the list it was opened from; a different scope or
+      // an opened article takes the column back.
+      useEffect(() => {
+        if (!digestRef.current) return
+        closeDigest()
+      }, [entriesKey, selectedId, closeDigest])
+
+      useEffect(() => () => {
+        try { digestRef.current?.release?.() } catch { /* panel unmounted */ }
+        digestRef.current = null
+      }, [])
+
       /**
        * Keep the selected row inside the list viewport.
        *
@@ -3909,6 +4621,15 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         const currentFeed = scope.kind === 'feed' ? feeds.find((feed) => feed.id === scope.id) : null
         const categoryId = scope.kind === 'category' ? scope.id : currentFeed?.categoryId
         setAddFeedCategory(categoryId ? String(categoryId) : '')
+        setAddFeedSeed('')
+        setShowAddFeed(true)
+      }
+
+      /** An RSSHub card hands its route here; the dialog validates the URL. */
+      const openAddFeedWith = (url) => {
+        if (!ensureConnected()) return
+        setAddFeedSeed(String(url || ''))
+        setAddFeedCategory('')
         setShowAddFeed(true)
       }
 
@@ -4740,8 +5461,6 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
       const hasMore = visibleEntries.length < listInfo.total
       const loadMore = () => { void loadEntries({ append: true }) }
 
-      const scopeTitle = scope.title
-        || (scope.kind === 'all' ? t('nav.list') : t('nav.unread'))
       const collapseLabel = t(sidebarCollapsed ? 'list.showSidebar' : 'list.hideSidebar')
       const markAllLabel = filter === 'starred' ? t('list.markAllStarred') : t('list.markAll')
 
@@ -4929,7 +5648,65 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
       const starLabel = article?.item.starred ? t('reader.unstar') : t('reader.star')
 
       const readerPane = h('div', { className: 'mrss-reader' },
-        articleState === 'ready' && article
+        digest
+          ? h('div', { className: 'mrss-digest-view' },
+            h('div', { className: 'mrss-digest-bar' },
+              h('span', { className: 'mrss-digest-title' }, h(WhaleMark, { size: 14 }), t('assistant.title')),
+              h('div', { className: 'mrss-digest-actions' },
+                h(Tip, { tip: t('assistant.newChat') },
+                  h('button', {
+                    className: 'mrss-btn', 'data-icon': 'true', 'data-variant': 'ghost', type: 'button',
+                    'aria-label': t('assistant.newChat'), onClick: newDigest,
+                  }, h(Icon, { name: 'plus' }))),
+                h(Tip, { tip: t('assistant.close') },
+                  h('button', {
+                    className: 'mrss-btn', 'data-icon': 'true', 'data-variant': 'ghost', type: 'button',
+                    'aria-label': t('assistant.close'), onClick: () => closeDigest(true),
+                  }, h(Icon, { name: 'close' })))),
+            ),
+            h('div', { className: 'mrss-digest-native', ref: digestRoot },
+              SessionProvider && renderSlot
+                ? h(SessionProvider, { session: digest.reference }, renderSlot('rss-miniflux.digest', {}))
+                : h('div', { className: 'mrss-digest-fallback' }, t('assistant.noSession')),
+              digestEmpty
+                ? h('div', { className: 'mrss-digest-empty', style: { bottom: `${composerSpace}px` } },
+                  h('div', { className: 'mrss-digest-empty-inner' },
+                    h('div', { className: 'mrss-digest-art' }, h(DigestArt)),
+                    h('div', { className: 'mrss-digest-greeting' }, t('assistant.greeting')),
+                    h('div', { className: 'mrss-digest-sub' }, digestScopeLine(localeKey, {
+                      title: scopeTitle,
+                      filter,
+                      count: listInfo.total || visibleEntries.length,
+                    })),
+                    h('div', { className: 'mrss-chip-row' },
+                      ['summary', 'slow', 'threads', 'changes', 'feeds'].map((key) => h('button', {
+                        key,
+                        type: 'button',
+                        className: 'mrss-chip',
+                        'data-chip': key,
+                        'data-on': chips.includes(key) ? 'true' : undefined,
+                        onClick: () => toggleChip(key),
+                      }, t(`chip.${key}`)))),
+                    h('div', { className: 'mrss-chip-row mrss-chip-scopes' },
+                      ['starred', 'unread', 'all'].map((key) => h('button', {
+                        key,
+                        type: 'button',
+                        className: 'mrss-chip',
+                        'data-chip': key,
+                        'data-on': chips.includes(key) ? 'true' : undefined,
+                        onClick: () => toggleChip(key),
+                      }, t(`chip.${key}`)))),
+                    chips.length > 0
+                      ? h('div', { className: 'mrss-chips-clear-row' },
+                        h('button', {
+                          type: 'button',
+                          className: 'mrss-chips-clear',
+                          onClick: () => { setChips([]); applyPrompt([]) },
+                        }, t('assistant.chipsClear')))
+                      : null))
+                : null),
+          )
+          : articleState === 'ready' && article
           ? h(React.Fragment, null,
             h('div', { className: 'mrss-progress', style: { width: `${progress}%` } }),
             h('div', { className: 'mrss-reader-head' },
@@ -5100,11 +5877,23 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
             ? h('div', { key: 'loading', className: 'mrss-center' }, t('reader.loading'))
             : articleState === 'error'
               ? h('div', { key: 'error', className: 'mrss-center' }, error?.message || t('error.title'))
-              : h('div', { key: 'idle', className: 'mrss-center' },
-                h('div', { className: 'mrss-void' },
-                  h(Icon, { name: 'inbox', size: 30, className: 'mrss-icon mrss-void-icon' }),
-                  h('span', null, t('reader.pick')),
-                )),
+              : !boot || (listInfo.loading && visibleEntries.length === 0)
+                // Nothing is known yet: a spinner, not "nothing to talk about",
+                // which would be a lie for the first few hundred milliseconds.
+                ? h('div', { key: 'idle-loading', className: 'mrss-center' },
+                  h('span', { className: 'mrss-spinner', 'aria-hidden': 'true' }))
+                : visibleEntries.length === 0
+                  ? h('div', { key: 'idle-empty', className: 'mrss-center' },
+                    h('div', { className: 'mrss-void' },
+                      h(Icon, { name: 'inbox', size: 30, className: 'mrss-icon mrss-void-icon' }),
+                      h('span', null, t('assistant.emptyList')),
+                    ))
+                  : h(AssistantEntry, {
+                  key: 'assistant-entry',
+                  t,
+                  busy: digestBusy,
+                  onOpen: openDigest,
+                }),
       )
 
       const addFeedDialog = showAddFeed
@@ -5112,7 +5901,8 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
           t,
           boot,
           initialCategoryId: addFeedCategory,
-          onClose: () => setShowAddFeed(false),
+          initialUrl: addFeedSeed,
+          onClose: () => { setShowAddFeed(false); setAddFeedSeed('') },
           onAdded: onFeedAdded,
         })
         : null
@@ -5427,6 +6217,45 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         )
         : null
 
+      const fileLayer = fileView
+        ? h('div', { className: 'mrss-file-layer', onClick: () => setFileView(null) },
+          h('div', {
+            className: 'mrss-file-view',
+            role: 'dialog',
+            'aria-modal': 'true',
+            onClick: (event) => event.stopPropagation(),
+          },
+          h('div', { className: 'mrss-file-head' },
+            h('span', { className: 'mrss-file-name', title: fileView.path }, fileView.name || fileView.path),
+            h('div', { className: 'mrss-file-actions' },
+              h('button', {
+                className: 'mrss-btn', type: 'button',
+                onClick: () => { void openExternally(fileView.path) },
+              }, t('file.open')),
+              h('button', {
+                className: 'mrss-btn', 'data-icon': 'true', type: 'button',
+                'aria-label': t('reader.close'), onClick: () => setFileView(null),
+              }, h(Icon, { name: 'close' })))),
+          h('div', { className: 'mrss-file-body' },
+            fileView.loading
+              ? h('div', { className: 'mrss-file-state' }, t('file.loading'))
+              : fileView.kind === 'text'
+                ? h('pre', { className: 'mrss-file-text' }, fileView.text)
+                : fileView.kind === 'image'
+                  ? h('img', {
+                    className: 'mrss-file-image',
+                    src: `data:${fileView.mime};base64,${fileView.base64}`,
+                    alt: fileView.name,
+                  })
+                  : fileView.kind === 'pdf'
+                    ? h('iframe', {
+                      className: 'mrss-file-pdf',
+                      src: `data:application/pdf;base64,${fileView.base64}`,
+                      title: fileView.name,
+                    })
+                    : h('div', { className: 'mrss-file-state' }, t('file.noPreview')))))
+        : null
+
       return h('div', {
         className: 'mrss-root',
         ref: rootRef,
@@ -5522,6 +6351,7 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
                 }, t('reader.fnBack'))),
             ))
           : null,
+        fileLayer,
         toast ? h('div', { className: 'mrss-toast' }, toast) : null,
       )
     }
@@ -5542,9 +6372,9 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
      * Standalone add-feed dialog: URL -> Miniflux discovery -> pick a feed and
      * a category -> subscribe. Adding one feed never opens the settings overlay.
      */
-    function AddFeedDialog({ t, boot, initialCategoryId, onClose, onAdded }) {
+    function AddFeedDialog({ t, boot, initialCategoryId, initialUrl = '', onClose, onAdded }) {
       const categories = boot?.categories || []
-      const [url, setUrl] = useState('')
+      const [url, setUrl] = useState(initialUrl)
       const [step, setStep] = useState('url')
       const [busy, setBusy] = useState('')
       const [error, setError] = useState('')
@@ -5603,6 +6433,14 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         setPicked(0)
         setStep('pick')
       }
+
+      // A route handed over by an assistant card is a direct URL: discover it
+      // straight away so the reader only checks the feed and a category.
+      useEffect(() => {
+        if (initialUrl) void findFeeds()
+        // Runs once for the prefill; later edits are the reader's own.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [])
 
       const subscribe = async () => {
         const chosen = results[picked]
@@ -6229,8 +7067,63 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         // Host-level labels cannot see the panel's prefs, so read them here.
         const t = (key) => makeT(loadPrefs().locale)(key)
 
-        function Provider() {
-          return h(Panel, {})
+        const chat = nativeChatBridge(ctx)
+
+        // Embedded digest sessions have no right-sidebar surface; file links in
+        // their answers are previewed by the panel instead of the shell's tab.
+        if (typeof ctx.inject === 'function') {
+          ctx.inject(['sidebarRight', 'uiWorkspace'], (scope) => {
+            const service = scope.sidebarRight
+            const workspace = scope.uiWorkspace
+            if (typeof workspace?.openSession === 'function') {
+              DIGEST_NAV.openSession = (id) => workspace.openSession(id)
+            }
+            if (!service || typeof service.openResource !== 'function') {
+              return () => { DIGEST_NAV.openSession = null }
+            }
+            const original = service.openResource
+            DIGEST_NAV.openResource = (url, options) => original.call(service, url, options)
+            DIGEST_NAV.openExternal = async (url) => {
+              for (let attempt = 0; attempt < 30; attempt += 1) {
+                if (typeof service.openTab === 'function') {
+                  try {
+                    await service.openTab('browser', { params: { url } })
+                    return true
+                  } catch (error) {
+                    if (!/session surface/i.test(String(error?.message || ''))) return false
+                  }
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100))
+              }
+              return false
+            }
+            service.openResource = function digestOpenResource(url, options) {
+              const file = parseDigestFileAddress(url)
+              if (file && DIGEST_OPEN.sessionId && file.sessionId === DIGEST_OPEN.sessionId) {
+                // Jump to the session's own interface; its right sidebar is the
+                // surface that can actually mount the file. The panel preview
+                // stays only as a fallback when navigation is unavailable.
+                void (async () => {
+                  const opened = await openWithSession(file.sessionId, url)
+                  if (!opened) {
+                    try { DIGEST_OPEN.show?.(file) } catch { /* keep the shell path working */ }
+                  }
+                })()
+                return undefined
+              }
+              return original.call(this, url, options)
+            }
+            return () => {
+              service.openResource = original
+              DIGEST_NAV.openResource = null
+              DIGEST_NAV.openSession = null
+              DIGEST_NAV.openExternal = null
+            }
+          })
+        }
+
+        function Provider(props) {
+          return h(Panel, { ...props, chat })
         }
 
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
@@ -6251,7 +7144,12 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         ctx.slots.inject('main', () => ctx.slots.register({
           name: 'main',
           key: PANEL_ID,
+          children: { 'rss-miniflux.digest': { kind: 'single', scope: 'session' } },
+          inject: () => ({ chat }),
         }, Provider))
+        ctx.slots.inject('rss-miniflux.digest', () => ctx.slots.register({
+          name: 'rss-miniflux.digest',
+        }, NativeDigestConversation))
       },
     }
   },

@@ -12,7 +12,10 @@
  *   node tests/host-cache.mjs
  */
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import http from 'node:http'
+import os from 'node:os'
+import path from 'node:path'
 import { apply } from '../index.js'
 
 const TOKEN = 'host-cache-token'
@@ -80,7 +83,13 @@ const fake = http.createServer((req, res) => {
     return reply(200, { reads: { 42: 0, 43: 0 }, unreads: { 42: 1, 43: 1 }, total: 2 })
   }
   if (url.pathname === '/v1/entries') {
-    return reply(200, { total: entries.length, entries })
+    if (url.searchParams.get('feed_id') === '999') return reply(200, { total: 0, entries: [] })
+    const feedId = url.searchParams.get('feed_id')
+    const categoryId = url.searchParams.get('category_id')
+    let list = entries
+    if (feedId) list = list.filter((entry) => String(entry.feed?.id) === feedId)
+    if (categoryId) list = list.filter((entry) => String(entry.feed?.category?.id) === categoryId)
+    return reply(200, { total: list.length, entries: list })
   }
   if (/^\/v1\/entries\/\d+\/status$/.test(url.pathname)) {
     // Track the write so a refetch would visibly disagree with a patched page.
@@ -139,14 +148,21 @@ function fakeNodeResponse() {
     status: 0,
     headers: {},
     body: '',
+    chunks: [],
     writableEnded: false,
     writeHead(status, headers) {
       this.status = status
       this.headers = headers || {}
     },
+    flushHeaders() {},
+    write(chunk) {
+      this.chunks.push(String(chunk || ''))
+      return true
+    },
     end(payload) {
       this.writableEnded = true
-      this.body = String(payload || '')
+      if (payload !== undefined) this.chunks.push(String(payload))
+      this.body = this.chunks.join('')
     },
     on() {},
   }
@@ -165,7 +181,8 @@ async function main() {
       return () => {}
     },
   }
-  const tools = { register: () => {} }
+  const registeredTools = new Map()
+  const tools = { register: (tool) => { registeredTools.set(tool.name, tool); return () => {} } }
   const disposers = []
   const ctx = {
     webServer,
@@ -397,6 +414,64 @@ async function main() {
     `a bulk read must not refetch the catalog, saw ${bulkCalls.join(', ')}`,
   )
   assert.equal(afterBulk.body.feeds.length, 2, 'the subscriptions are still there')
+
+  // 5d. The timeline tool is what the digest session uses instead of a context
+  //     file: it pages the live Miniflux API and returns titles with ids.
+  const timelineTool = registeredTools.get('miniflux_timeline')
+  assert.ok(timelineTool, 'miniflux_timeline must be registered')
+  const listing = await timelineTool.execute({ kind: 'all', filter: 'unread', limit: 2 }, {})
+  assert.match(listing, /共 2 条/)
+  assert.match(listing, /本页：offset 0，返回 2 条/)
+  assert.match(listing, /#101 \[One\]\(<https:\/\/fake\.example\/a>\)/, 'timeline titles must carry their original link')
+  assert.match(listing, /Fake Tech/)
+  const empty = await timelineTool.execute({ kind: 'feed', id: 999 }, {})
+  assert.match(empty, /共 0 条/)
+  assert.match(empty, /这一页没有条目/)
+
+  const categoryScoped = await timelineTool.execute({ kind: 'category', title: 'Tech' }, {})
+  assert.match(categoryScoped, /时间线：Tech · 未读 · 共 1 条/)
+  assert.match(categoryScoped, /#101 \[One\]/)
+  assert.doesNotMatch(categoryScoped, /#102 \[Two\]/)
+  const feedScoped = await timelineTool.execute({ kind: 'feed', title: 'Fake Product' }, {})
+  assert.match(feedScoped, /时间线：Fake Product/)
+  assert.match(feedScoped, /#102 \[Two\]/)
+  assert.doesNotMatch(feedScoped, /#101 \[One\]/)
+  await assert.rejects(
+    () => timelineTool.execute({ kind: 'category', title: 'Nope' }, {}),
+    /Tech \(id 7\)/,
+    'an unresolved title must list the candidates with ids',
+  )
+
+  const postExact = async (route, payload) => {
+    const res = fakeNodeResponse()
+    await exactRoutes.get(route).handler(fakeNodeRequest('POST', payload), res)
+    return { status: res.status, body: res.body ? JSON.parse(res.body) : null }
+  }
+
+  // 5e. The panel previews files the agent links (the right sidebar cannot
+  //     mount an embedded session), so it reads them through the Host.
+  const previewDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mrss-file-'))
+  try {
+    const filePath = path.join(previewDir, 'note.md')
+    fs.writeFileSync(filePath, '# Note\n\nHello from the digest.\n')
+    const preview = await postExact('/rss-miniflux/api/file', { path: filePath })
+    assert.equal(preview.status, 200, `file preview failed: ${preview.body}`)
+    assert.equal(preview.body.kind, 'text')
+    assert.equal(preview.body.name, 'note.md')
+    assert.match(preview.body.text, /Hello from the digest/)
+
+    const imagePath = path.join(previewDir, 'dot.png')
+    fs.writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+    const image = await postExact('/rss-miniflux/api/file', { path: imagePath })
+    assert.equal(image.body.kind, 'image')
+    assert.equal(image.body.mime, 'image/png')
+    assert.ok(image.body.base64.length > 0)
+
+    const missing = await postExact('/rss-miniflux/api/file', { path: path.join(previewDir, 'nope.md') })
+    assert.ok(missing.status >= 400, 'a missing file should not preview')
+  } finally {
+    fs.rmSync(previewDir, { recursive: true, force: true })
+  }
 
   // 6. Degraded bootstrap: one upstream call failing must not empty the panel.
   //    This is the reported symptom — mark something read, then the whole

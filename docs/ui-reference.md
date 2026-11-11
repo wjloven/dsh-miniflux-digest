@@ -28,7 +28,18 @@ What every part of the panel does, control by control. Useful when changing the 
 
 **正文图片等解码完再出现**：图片先按 `width`/`height` 占好位置（宽图可出血到栏外内边距，窄图不放大），在 `load` + `decode()` 前不可见，完成后一次性淡入 240 ms；加载失败露出 alt 文本。等待期间预留位置上盖着一块同尺寸的浅色块，带一道 1.5 s 的扫光，图好了就撤掉——不是空白洞，也没有「先糊后清」的中间帧，下面的文字也不会被顶下去。
 
-### 新增订阅（Add feed）
+### 空文章页 → AI digest 栏（原生会话）
+
+- 空文章页保持原样：inbox 图标 + `Pick an entry to start reading`，下方多一枚小气泡入口 `Continue with AI digest`。空页不调用模型。
+- 点入口：第三栏切到 AI digest——顶部 `AI digest` + `+`（New chat）+ `X`（Close），主体是**嵌入的原生 DSH 对话**（不是自绘聊天）。插件用 `sessions.create/retain` 建会话，`SessionProvider` 包住 session 作用域的子 slot，渲染 `conversation.content`（embedded）；消息、输入框、模型选择、工具都是 DSH 自己的。
+- Host 的 `/digest` 把当前时间线整理成草稿（首行 `My Miniflux digest timeline “{标题}” ({篇数} articles).`，随后是标题列表或上下文文件路径，以及一句可编辑指令），客户端用 `uiSession.bindingSource(...).props.inputActions.setDraft` 放进**原生输入框**；草稿不会自动发送。
+- **推荐问句是提示词构建器**：原生空白会话的 hero（`Into the Unknown`）被关掉；对话框完全不动（空白会话保留原生 workspace 选择器，只隐藏 hero headline）；空页图标为 40px 书标（无圆形底），入口和标题前是 DeepSeek 鲸鱼 mark，问候上方是书页/星芒/波纹插画；对话区空白处居中是问候标题（`What should we dig into?`）+ 当前范围行（`All articles · 207 unread`）+ 两行 chips（分析：这屏来了什么 / 挑 3 篇慢读 / 按主题归组 / 这周有什么变化 / 推荐 RSSHub 源；范围：只看收藏 / 只看未读 / 全部）。点选组合后，面板把完整提示词填进原生输入框：一句自然语言的时间线上下文（名称、类型、过滤、篇数）+ 工具用法 + 选中的分析句 + 回答语言；再点取消，`Clear` 清空。提示词不含 scope 术语、不预取、不落盘。
+- **Agent 用 `miniflux_timeline` 现取**：工具接受 `kind`/`title`/`filter`/`query`，用 `limit`/`offset` 翻页，返回总数、来源分布、带 id 的标题；需要正文用 `miniflux_read`。
+- **回答里的文件在面板预览**：嵌入式会话不是右侧栏的 on-screen session，壳的文件页挂不上 surface；面板只对 digest 会话拦截 `dsh-resource://file/...`，用 `.mrss-file-view` 打开文本 / 图片 / PDF，其他格式给「用默认应用打开」。主会话不受影响。
+- `+`：释放当前会话，用同一份草稿开新会话；`X`：释放会话回到空页。切换订阅源/分类/过滤/搜索或打开文章会自动关闭。
+- 失败（时间线为空、会话服务未就绪）只弹 toast；入口在请求期间显示 `Preparing…`。
+
+### 新增订阅（Add feed）### 新增订阅（Add feed）
 
 1. 侧栏 `+` → `New feed`（或 `Shift+N`）打开独立弹框，不会进设置。
 2. 填站点地址或 Feed 地址，回车或点 `Find feeds`；Host 调 Miniflux 的 `POST /v1/discover`，返回该地址上的 Feed 列表（标题、URL、rss/atom/json 类型）。

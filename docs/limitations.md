@@ -30,3 +30,6 @@ Edge cases worth knowing before you rely on a feature.
 - 订阅栏的收起状态存在面板内存缓存里：切到对话再回来还是收起的，刷新页面会恢复展开。
 - 颜色全部走 Harness 的 alias token（主按钮/激活页签 = `brand-primary` + `label-primary-foreground`，开关滑块 = `label-primary-foreground`，toast = `toast-bg`/`toast-label`）。暗色下 `brand-primary` 会翻成近白色，所以**不要**再给主按钮写死 `#fff` 文字；单选圆点用自定义 `.mrss-radio`，不依赖原生 `accent-color`。
 - DSH 侧栏折叠后，窗口红绿灯和侧栏开关会浮在面板左上角。面板在 `[data-sidebar-collapsed]` 下按 `--dsh-frame-top-clearance`（48px）留出一条标题栏带，标题行不会被这些按钮压住；展开时不留这条带。
+- RSSHub 推荐是模型给的路由，插件不预先逐个验证；公共实例可能限流或不可达，订阅失败会在添加弹框里显示 Miniflux 的错误。
+- AI digest 的回答里的文件链接由面板自己的预览打开（文本 / 图片 / PDF）；Office、压缩包等二进制格式不内嵌预览，用「用默认应用打开」。只有 digest 会话被拦截，主会话仍走 Harness 右侧栏。
+- AI digest 的条目数据由 Agent 通过 `miniflux_timeline` 等工具现取，因此会话里的内容会随 Miniflux 变化，不是打开那一刻的冻结快照。

@@ -140,8 +140,12 @@ const HELPERS = `(() => {
       rows: window.__rows().length,
       scope: (document.querySelector('.mrss-scope')?.textContent || '').trim(),
       article: Boolean(document.querySelector('.mrss-article')),
-      void: Boolean(document.querySelector('.mrss-void')),
-      pick: (document.querySelector('.mrss-void')?.textContent || '').trim(),
+      // The idle reader is the assistant conversation (the void is only for an
+      // empty list).
+      void: Boolean(document.querySelector('.mrss-chat') || document.querySelector('.mrss-void')),
+      pick: (document.querySelector('.mrss-chat')?.textContent
+        || document.querySelector('.mrss-void')?.textContent
+        || '').trim(),
       active,
       busy: window.__busy(),
       readerHasContent: Boolean(reader && reader.textContent.trim()),

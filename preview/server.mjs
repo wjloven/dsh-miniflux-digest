@@ -176,6 +176,52 @@ const server = http.createServer((req, res) => {
       const payload = article(url.searchParams.get('id'), `http://127.0.0.1:${PORT}`)
       return payload ? send(res, 200, payload) : send(res, 404, { error: { code: 'not_found', message: 'no such entry' } })
     }
+    if (api === '/file' && req.method === 'POST') {
+      let raw = ''
+      req.on('data', (chunk) => { raw += chunk })
+      req.on('end', () => {
+        let body = {}
+        try { body = JSON.parse(raw || '{}') } catch { body = {} }
+        send(res, 200, {
+          name: String(body.path || 'file').split('/').pop(),
+          path: body.path,
+          bytes: 24,
+          kind: 'text',
+          mime: 'text/plain; charset=utf-8',
+          text: '# Preview\n\nHello from the file viewer.',
+        })
+      })
+      return undefined
+    }
+    if (api === '/open' && req.method === 'POST') {
+      send(res, 200, { ok: true })
+      return undefined
+    }
+    if (api === '/digest' && req.method === 'POST') {
+      let raw = ''
+      req.on('data', (chunk) => { raw += chunk })
+      req.on('end', () => {
+        let body = {}
+        try { body = JSON.parse(raw || '{}') } catch { body = {} }
+        const title = String(body.title || 'All articles')
+        const count = Number(body.count) || 0
+        const prompt = [
+          `My Miniflux digest timeline “${title}” (${count || 'unknown'} articles, filter ${body.filter || 'unread'}).`,
+          '',
+          'Before answering, call the miniflux_timeline tool with:',
+          `  kind: "${body.kind || 'all'}"`,
+          `  id: ${body.kind && body.kind !== 'all' ? body.id : '(none)'}`,
+          `  filter: "${body.filter || 'unread'}"`,
+          '  query: (none)',
+          `  count: ${count || '(unknown)'}`,
+          'Page with limit (default 30) and offset; use miniflux_read for a full article. Do not guess entries.',
+          '',
+          'Summarize what came in, group the threads, and point out what is worth reading first. Answer in the chat.',
+        ].join('\n')
+        send(res, 200, { title, count, prompt })
+      })
+      return undefined
+    }
     if (api === '/models') return send(res, 200, models)
     if (api === '/efforts') return send(res, 200, efforts)
     if (api === '/dashboard') return send(res, 200, { digest: null })

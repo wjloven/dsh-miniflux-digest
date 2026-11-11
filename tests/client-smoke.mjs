@@ -56,8 +56,9 @@ assert.match(
 assert.equal(loaded.id, 'rss-miniflux-deepread', 'module id must equal the package name')
 
 const module = loaded.factory((name) => {
-  assert.equal(name, 'react', `unexpected require(${name})`)
-  return react
+  if (name === 'react') return react
+  if (name === 'react-dom') return { createPortal: (node) => node }
+  assert.fail(`unexpected require(${name})`)
 })
 
 assert.ok(module && typeof module.apply === 'function', 'factory must return apply')
@@ -79,7 +80,7 @@ const ctx = {
 
 module.apply(ctx)
 
-assert.equal(registrations.length, 2, `expected 2 registrations, got ${registrations.length}`)
+assert.equal(registrations.length, 3, `expected 3 registrations, got ${registrations.length}`)
 const sidebar = registrations.find((entry) => entry.position.name === 'sidebar.panellist')
 const main = registrations.find((entry) => entry.position.name === 'main')
 assert.ok(sidebar, 'sidebar launcher was not registered')
@@ -87,5 +88,10 @@ assert.equal(sidebar.position.id, 'rss-miniflux')
 assert.equal(typeof sidebar.component, 'function')
 assert.ok(main, 'main panel was not registered')
 assert.equal(main.position.key, 'rss-miniflux')
+assert.deepEqual(Object.keys(main.position.children || {}), ['rss-miniflux.digest'],
+  'the main panel must declare the native digest child slot')
+const digest = registrations.find((entry) => entry.position.name === 'rss-miniflux.digest')
+assert.ok(digest, 'the native digest conversation slot was not registered')
+assert.equal(typeof digest.component, 'function')
 
 console.log('client smoke ok:', registrations.map((entry) => entry.position.name).join(', '))

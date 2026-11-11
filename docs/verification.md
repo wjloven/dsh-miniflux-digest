@@ -21,6 +21,10 @@ What was tested, on which setup, and what is still unverified.
 | 状态保持 | 面板状态改为组件外缓存：筛选、搜索、选中条目、正/列表滚动位置都跨挂载保留；进入时不重取，侧栏刷新按钮 / `r` 才更新（无浏览器控制，未做交互级验证） |
 | 推理强度 | 通过：`GET /efforts` 对两个 provider 返回各自声明的档位；同一请求 off 7.6s / low 21.0s，元信息正确记录所选档位 |
 | 侧栏头部 | 通过（headless Chromium）：`+` 菜单的 New feed / New category 各开独立弹框，Import OPML 直接触发隐藏的 file input（不打开设置）；齿轮落在 Preferences；200px 侧栏下标题与时间不截断 |
+| 推荐问句构建器 | 通过（headless Chromium，`tests/digest-entry.mjs`）：打开时输入框为空、问候标题 + 范围行、没有旧的 `Ask about` 标签、8 个 chips；点「这屏来了什么」→ 完整提示词（自然语言上下文 + `miniflux_timeline` + 分析句 + 回答语言）；再点「挑 3 篇慢读」→ 两句共存且上下文只出现一次；再点取消；`Clear` 清空；`+` 新会话清空选择；切分类后提示词换成新分类 |
+| 时间线工具 | 通过（`tests/host-cache.mjs`）：`miniflux_timeline` 返回 `共 N 条`、offset、来源分布、`#id [标题](原文)（来源 · 时间）`；分类/订阅源按 title 解析后，实际请求带解析出的 category_id/feed_id（曾漏用导致返回全部 903 条）；`Tech`/`Fake Product` 的 scoped 断言、未知 title 报候选 `Tech (id 7)`、翻页与空列表 |
+| 回答里的文件预览 | 通过（headless Chromium，`tests/digest-entry.mjs`）：点 digest 会话的 `dsh-resource://file/...` 弹出 `.mrss-file-view`（名称 + 内容），不落右侧栏；别的 session 仍走壳；Host `/file` 读文本/图片，`/open` 走系统默认应用 |
+| 助理 Host 流 | 通过（`tests/host-cache.mjs`，假 LLM）：SSE 以 `start` 开始、`done` 结束；散文带引用、`sources` 只含被引用条目；```feeds 块从散文流中消失并作为 `feeds` 事件给出，已订阅源被丢弃；空时间线与无模型都是 `error` 帧 |
 | 切换动效 | 通过（headless Chromium，`tests/motion.mjs`）：打开文章时 `.mrss-article` 带 `mrss-article--enter` 且 180 ms 后不透明；切分类后列表页 `mrss-list-in`、范围名 `mrss-fade`、空态 `mrss-void-in`、侧栏订阅行 `mrss-list-in`，400 ms 后都不透明；刷新页面恢复文章时**不**重播进场动画（无 class、`animation-name: none`）；模拟 `prefers-reduced-motion: reduce` 后全部为 `none` 且内容可见 |
 | 正文图片 | 通过（headless Chromium，`tests/reader-images.mjs`，CDP Fetch 暂停图片请求制造真实等待）：等待中 `data-mrss-image="pending"`、`opacity: 0`、按 1440×900 预留 655×409（比例 1.6），占位块与图片盒四边完全重合（653/676/655×409）；放行后 `ready`、不透明、占位块移除、内联宽度/比例清空、自然宽 1440，尺寸与预留一致 |
 | 图片占位视觉 | 通过（截图 `image-pending.png` / `image-ready.png`）：暂停请求时预留位置是一块浅灰圆角块 + 慢扫光，不是空白；放行后同一位置出现图片，文章其余内容没有位移 |

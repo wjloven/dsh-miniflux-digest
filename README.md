@@ -22,6 +22,10 @@ Bring your Miniflux subscriptions directly into DeepSeek Harness. Miniflux Diges
 | --- | --- |
 | ![Footnote](preview/shots/reader-footnote.jpg) | ![Settings](preview/shots/settings-appearance.jpg) |
 
+| Empty Page + AI Entry |
+| --- |
+| ![Entry](preview/shots/assistant-empty.jpg) |
+
 ## Features
 
 - **Three-column reading workspace:** Categories and feeds on the left, an article feed in the center, and the full reader on the right. Everything opens in place without spawning external tabs.
@@ -34,69 +38,10 @@ Bring your Miniflux subscriptions directly into DeepSeek Harness. Miniflux Diges
 - **Embedded media playback:** Plays video embeds from YouTube, Bilibili, and X (Twitter) natively within the reader.
 - **Keyboard-driven workflow:** Navigate articles and manage state effortlessly using standard reader keys (`j` / `k` to move, `m` to toggle read, `s` to star, `c` to copy clean Markdown, `v` to visit the original web page).
 - **Deep assistant integration:** Built-in tools allow your AI agent to query unread statistics, summarize whole categories, or parse article content using the same account and read states.
-- **Bilingual interface:** Seamlessly switch between English and Simplified Chinese under Settings → General.
-
-## Requirements
-
-- DeepSeek Harness >= 0.2
-- Miniflux instance >= 2.0 (Miniflux >= 2.3.2 required for batch starring)
-
-## Installation
-
-```bash
-dsh plugin --profile desktop add /path/to/dsh-miniflux-digest
-```
-
-After installing, enable `rss-miniflux` in your Plugin Manager. The reading panel will dock into the sidebar.
-
-To update, pull the latest repository changes and toggle the plugin switch off and on again.
-
-## Connecting to Miniflux
-
-On initial launch, the setup modal will prompt you for your server address and API token (generate one in Miniflux under **Settings → API Keys**). The plugin tests the connection immediately.
-
-You can also provide credentials via environment variables or plugin configuration:
-
-```yaml
-- id: rss-miniflux
-  name: 'rss-miniflux-deepread'
-  config:
-    baseUrl: https://rss.example.com
-    timeoutMs: 15000
-```
-
-Alternatively, export `MINIFLUX_BASE_URL` and `MINIFLUX_API_TOKEN` in your environment.
-Precedence: Plugin Configuration > Saved Credentials > Environment Variables.
-
-> **Tip:** You can explore the full interface without credentials by closing the setup dialog to load the built-in demo feeds.
-
-## Assistant Tools
-
-The plugin provides six tools that share session credentials and unread states with the desktop UI:
-
-| Tool | Purpose |
-| --- | --- |
-| `miniflux_overview` | Checks connection status and summarizes unread counts across categories and feeds |
-| `miniflux_digest` | Generates an unread digest covering time range, feed distribution, recurring themes, and recommended deep reads |
-| `miniflux_briefing` | Produces an executive briefing for a specific category directly in the conversation |
-| `miniflux_read` | Retrieves full article content formatted as clean Markdown |
-| `miniflux_search` | Searches subscriptions by keyword |
-| `miniflux_act` | Toggles read/unread status, updates stars, or triggers feed and category refreshes |
-
-### Example Prompts
-
-> "Give me a briefing on the Tech category and highlight the top 3 recurring topics."
-
-> "Check my unread queue and recommend three articles worth a slow read, along with your reasons."
-
-## Privacy & Security
-
-- **Local credential isolation:** API tokens are stored securely in your local Harness profile vault—never exposed to disk configs or committed to version control.
-- **Direct communication:** Network calls connect strictly to your configured Miniflux server. Embedded X post videos resolve streams via `cdn.syndication.twimg.com`.
-- **Stateless caching:** Memory caches and UI snapshots exist only to deliver instantaneous page restoration. Disconnecting, logging out, or switching accounts flushes all cached data.
-- **Restrained prefetching:** A prefetch fires only after the pointer rests 140 ms on a row, never more than two at a time, never for something already cached, and idle warming runs in its own lane so it can never delay a click. X media is a second request, after the article body is already on screen.
+- **An AI digest column with the real conversation inside:** the empty article page keeps its copy under a larger book mark; the "Continue with AI digest" entry carries the DeepSeek whale mark. It switches the column to AI digest: a title row (DeepSeek whale + "AI digest", new chat, close) above the **embedded DSH conversation** — created with `sessions`, wrapped in `SessionProvider`, and rendered through the session-scoped `conversation.content` slot, so the messages, native composer, model picker and tools are the shell's own. There is no context file and no prefetch, and the shell's blank-conversation hero headline ("Into the Unknown") is hidden while the native workspace picker stays available before the first message. Centred in the blank conversation area above the (untouched) composer, under a small book/sparkle illustration, sit a **greeting title** (What should we dig into?) with the current scope line (e.g. "All articles · 207 unread"), then two rows of **natural-language prompt chips** (what came in, 3 worth a slow read, group by thread, what changed this week, feeds worth following, plus starred/unread/all). Clicking them builds the whole prompt in the composer — a plain-language timeline context (name, kind, filter, count), the tool instruction, the selected asks and the answer language — which the reader can edit or send. Re-clicking a chip removes it; Clear sits on its own centred row and empties the composer. The agent then calls the new **miniflux_timeline** tool (it accepts kind/title/filter) to page the live timeline, and miniflux_read for an article. Each timeline line carries the entry's original Markdown link, and the prompt asks the agent to link the entries it recommends; the blank session keeps the native workspace picker. Clicking a file or link in the answer jumps to that digest session's own interface (`uiWorkspace.openSession`) and opens there: files via `openResource`, external links via `openTab('browser')` in the session's right sidebar, with no system-browser fallback. The digest session id and selected chips are remembered in localStorage and resumed when you return to the same scope (the native session keeps the history; no new session is created); the in-panel preview is only a file fallback.
 
 ## Limitations
+- RSSHub suggestions are routes named by the model; the plugin does not verify each one. The public instance can rate-limit or be unreachable, and a failed subscribe is reported by Miniflux in the Add-feed dialog.
 
 - Requires an active, reachable Miniflux server; offline reading sync is not supported.
 - Optimized for desktop-width displays; very narrow split panels may compress the reading column.

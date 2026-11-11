@@ -128,7 +128,8 @@ const HELPERS = `(() => {
     list: window.__anim('.mrss-list .mrss-scroll'),
     listAttr: document.querySelector('.mrss-list .mrss-scroll')?.getAttribute('data-anim') || '',
     scope: window.__anim('.mrss-scope'),
-    void: window.__anim('.mrss-void'),
+    // The idle reader is the greeting page (the chat only opens on demand).
+    pane: window.__anim('.mrss-void'),
     sidebar: window.__anim('.mrss-feedline'),
     article: window.__anim('.mrss-article'),
   })
@@ -206,14 +207,14 @@ async function run() {
     for (const [facet, expected] of [
       ['list', 'mrss-list-in'],
       ['scope', 'mrss-fade'],
-      ['void', 'mrss-void-in'],
+      ['pane', 'mrss-void-in'],
       ['sidebar', 'mrss-list-in'],
     ]) {
       assert.ok(swapped[facet], `no ${facet} to measure after the switch`)
       assert.equal(swapped[facet].name, expected, `${facet} does not use ${expected}`)
     }
     // The fades must end on the visible state, not leave the panel blank.
-    for (const facet of ['list', 'void', 'sidebar']) {
+    for (const facet of ['list', 'pane', 'sidebar']) {
       assert.equal(swapped[facet].opacity, 1, `${facet} is still not fully visible after the switch`)
     }
 
@@ -266,7 +267,7 @@ async function run() {
     await evaluate('window.__tab(2)')
     await wait(300)
     const reduced = await evaluate('window.__switchState()')
-    for (const facet of ['list', 'scope', 'void', 'sidebar']) {
+    for (const facet of ['list', 'scope', 'pane', 'sidebar']) {
       assert.ok(reduced[facet], `no ${facet} to measure in reduced motion`)
       assert.equal(reduced[facet].name, 'none', `${facet} still animates with reduced motion`)
       if (facet !== 'scope') assert.equal(reduced[facet].opacity, 1, `${facet} is hidden in reduced motion`)
@@ -283,11 +284,11 @@ async function run() {
 
     console.log('[motion] opened:  ', JSON.stringify({ article: opened.article }))
     console.log('[motion] swapped: ', JSON.stringify({
-      list: swapped.list, scope: swapped.scope, void: swapped.void, sidebar: swapped.sidebar,
+      list: swapped.list, scope: swapped.scope, pane: swapped.pane, sidebar: swapped.sidebar,
     }))
     console.log('[motion] restored:', JSON.stringify(restored))
     console.log('[motion] reduced: ', JSON.stringify({
-      list: reduced.list, scope: reduced.scope, void: reduced.void, sidebar: reduced.sidebar,
+      list: reduced.list, scope: reduced.scope, pane: reduced.pane, sidebar: reduced.sidebar,
       article: reducedArticle.article,
     }))
     client.close()

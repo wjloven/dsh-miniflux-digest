@@ -33,25 +33,101 @@
     if (!definition) throw new Error('client.js did not register a module')
     const mod = definition.factory((name) => {
       if (name === 'react') return window.React
+      if (name === 'react-dom') return window.ReactDOM
       throw new Error(`unexpected require(${name})`)
     })
     let Main = null
     let SidebarEntry = null
-    mod.apply({
-      get: () => undefined,
+    const byName = new Map()
+    // A stand-in for the shell: sessions that accept a draft, a workspace list,
+    // and the two standard panel props (SessionProvider + renderSlot).
+    window.__drafts = []
+    window.__sessionCreates = 0
+    window.__scope = {
+      sidebarRight: {
+        openResource: (url) => { window.__fallbackOpen = url; window.__openResourceCalls = [...(window.__openResourceCalls || []), url] },
+        openTab: (id, options) => { window.__tabOpened = { id, ...options } },
+      },
+      sidebarRightTabs: {
+        get: (id) => (id === 'browser' ? { id: 'browser' } : undefined),
+      },
+      uiWorkspace: {
+        openSession: (id) => { window.__sessionOpened = id },
+        workspaces: {
+          list: {
+            getSnapshot: () => ({ items: [{ workspaceId: 'ws-demo', title: 'default-workspace', path: '/tmp/demo' }] }),
+            subscribe: () => () => {},
+          },
+        },
+      },
+      sessions: {
+        create: async () => { window.__sessionCreates += 1; return `session-${window.__sessionCreates}` },
+        retain: (id, options) => ({ id, options, release() {} }),
+      },
+      uiSession: {
+        // Each session gets its own composer draft, like the real binding.
+        bindingSource: () => {
+          const state = { draft: '' }
+          return {
+            value: {
+              props: {
+                inputActions: {
+                  setDraft: (text) => { state.draft = text; window.__drafts.push(text) },
+                },
+              },
+              hooks: {
+                input: {
+                  getSnapshot: () => ({ draft: state.draft, phase: 'plain' }),
+                  subscribe: () => () => {},
+                },
+              },
+            },
+          }
+        },
+      },
+    }
+    const ctx = {
+      get: (name) => window.__scope[name],
+      inject: (deps, callback) => { callback(window.__scope); return () => {} },
       slots: {
         inject: (key, callback) => { callback(); return () => {} },
         register: (position, component) => {
           if (position.name === 'main') Main = component
-          // Harness mounts the sidebar entry with the app; mount it here too so
-          // the warm-up path runs exactly as it does in the product.
           if (position.name === 'sidebar.panellist') SidebarEntry = component
+          byName.set(position.name, component)
           return () => {}
         },
       },
-    })
+    }
+    mod.apply(ctx)
     if (!Main) throw new Error('main panel was not registered')
-    ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(Main))
+    const fakeSessionProvider = ({ children }) => React.createElement('div', { className: 'fake-session' }, children)
+    const renderSlot = (name) => React.createElement('div', { className: 'fake-native', 'data-slot': name },
+      React.createElement('div', { 'data-composer-seat': '' },
+        React.createElement('div', { 'data-composer-card': '' }, 'fake composer'),
+        React.createElement('a', { href: 'https://example.com/post' }, 'external link')))
+    // The real shell injects the bridge through the main slot; the preview
+    // builds the same surface from window.__scope.
+    const mainProps = {
+      SessionProvider: fakeSessionProvider,
+      renderSlot,
+      chat: {
+      defaultChatWorkspace: () => 'ws-demo',
+        async openChat() {
+          window.__sessionCreates += 1
+          const id = `session-${window.__sessionCreates}`
+          return {
+            sessionId: id,
+            reference: { id, release() {} },
+            release() {},
+            async setDraft(prompt) {
+              window.__drafts.push(prompt)
+            },
+          }
+        },
+      },
+    }
+    ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(Main, mainProps))
     if (SidebarEntry) {
       const holder = document.createElement('div')
       holder.id = 'sidebar-entry'
