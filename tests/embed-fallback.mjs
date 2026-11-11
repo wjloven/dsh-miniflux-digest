@@ -141,14 +141,15 @@ async function run() {
     }
 
     const state = () => evaluate(`(() => {
-      const card = document.querySelector('.mrss-embed--link')
+      const wrapper = document.querySelector('.mrss-embed')
       const frame = document.querySelector('.mrss-embed iframe')
+      const note = document.querySelector('.mrss-embed-note')
       return {
-        kind: card ? 'card' : (frame ? 'frame' : 'other'),
+        kind: frame ? 'frame' : 'other',
         src: frame ? frame.getAttribute('src') : '',
-        href: card ? card.getAttribute('href') : '',
-        thumb: card ? (document.querySelector('.mrss-embed-thumb')?.getAttribute('src') || '') : '',
-        hint: card ? (card.innerText || '').trim().slice(0, 80) : '',
+        referer: wrapper ? wrapper.getAttribute('data-player-referer') : null,
+        noteHref: note ? note.getAttribute('href') : '',
+        noteText: note ? (note.textContent || '').trim() : '',
       }
     })()`)
 
@@ -163,7 +164,8 @@ async function run() {
       frame.src = frame.src.includes('?') ? frame.src + '&noref=1' : frame.src + '?noref=1'
       const deadline = performance.now() + 10_000
       while (performance.now() < deadline) {
-        if (document.querySelector('.mrss-embed--link')) return true
+        const wrapper = document.querySelector('.mrss-embed')
+        if (wrapper && wrapper.getAttribute('data-player-referer') === 'false') return true
         await new Promise((resolve) => setTimeout(resolve, 60))
       }
       return false
@@ -189,24 +191,26 @@ async function run() {
     })()`)
     assert.equal(opened, true, 'the video article never rendered an embed')
 
-    // 1. The player is the default: the report has not arrived yet.
+    // 1. The player is rendered straight away, with the escape hatch under it.
     const beforeReport = await state()
     assert.equal(beforeReport.kind, 'frame', `the player should be shown first, saw ${JSON.stringify(beforeReport)}`)
     assert.match(beforeReport.src, /^\/rss-miniflux\/player\?id=/, `unexpected player src: ${beforeReport.src}`)
+    assert.match(beforeReport.noteHref, /^https:\/\/www\.youtube\.com\/watch\?v=/, `the note should link the video, saw ${beforeReport.noteHref}`)
+    assert.ok(beforeReport.noteText.length > 0, 'the note needs a label')
+    // The preview's player reports on load; the real one does too. Either a
+    // missing report or a positive one is fine here.
+    assert.ok(
+      beforeReport.referer === null || beforeReport.referer === 'true',
+      `unexpected first report: ${beforeReport.referer}`,
+    )
 
-    // 2. The preview's player reports a Referer on load, and the player stays:
-    //    the positive path is the default one.
-    await wait(600)
-    assert.equal((await state()).kind, 'frame', 'a positive report must keep the player')
-
-    // 3. A negative report swaps in the card, which always works.
+    // 2. A negative report is recorded but must NOT hide the player: the check
+    //    depends on the shell and a false negative once hid a working player.
     assert.equal(await reportMissingReferer(), true, 'the player never reported a missing Referer')
-    await wait(200)
+    await wait(300)
     const afterReport = await state()
-    assert.equal(afterReport.kind, 'card', `a missing Referer should fall back, saw ${JSON.stringify(afterReport)}`)
-    assert.match(afterReport.href, /^https:\/\/www\.youtube\.com\/watch\?v=/, `the card should open the video, saw ${afterReport.href}`)
-    assert.match(afterReport.thumb, /^https:\/\/i\.ytimg\.com\/vi\//, `the card should use a thumbnail, saw ${afterReport.thumb}`)
-    assert.ok(afterReport.hint.length > 0, 'the card should explain itself')
+    assert.equal(afterReport.kind, 'frame', 'a negative report must not remove the player')
+    assert.equal(afterReport.referer, 'false', 'the report is kept as a diagnostic')
 
     assert.deepEqual(client.problems, [], `page errors: ${client.problems.join(' | ')}`)
     console.log('[embed] before report:', JSON.stringify(beforeReport))

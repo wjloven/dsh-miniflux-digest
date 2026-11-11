@@ -415,44 +415,31 @@ window.__ModuleLoader__.load({
       return ''
     }
 
-    function articleEmbedFallback(embed, t) {
+    /**
+     * A small line under the player. The player is always rendered: a probe
+     * that says "no Referer here" is not a reliable reason to withhold it (the
+     * check depends on the shell, and a false negative was hiding a player that
+     * worked), so the honest move is to offer the escape hatch next to it.
+     */
+    function articleEmbedNote(embed, t) {
       const page = embedPageUrl(embed)
-      const thumb = embed.provider === 'youtube' && VIDEO_ID.test(String(embed.id || ''))
-        ? `https://i.ytimg.com/vi/${embed.id}/hqdefault.jpg`
-        : ''
+      if (!page) return null
       return h('a', {
-        className: 'mrss-embed mrss-embed--link',
-        'data-provider': embed.provider,
-        href: page || undefined,
+        className: 'mrss-embed-note',
+        href: page,
         target: '_blank',
         rel: 'noreferrer',
         title: t('embed.external'),
-        'aria-label': t('embed.external'),
-      },
-      thumb
-        ? h('img', {
-          className: 'mrss-embed-thumb',
-          src: thumb,
-          alt: '',
-          loading: 'lazy',
-          referrerPolicy: 'no-referrer',
-          onError: (event) => { event.currentTarget.style.display = 'none' },
-        })
-        : null,
-      h('span', { className: 'mrss-embed-play', 'aria-hidden': 'true' },
-        h('svg', { viewBox: '0 0 24 24', width: 26, height: 26, fill: 'currentColor' },
-          h('path', { d: 'M8 5v14l11-7z' }))),
-      h('span', { className: 'mrss-embed-hint' }, t('embed.external')),
-      )
+      }, t('embed.openExternal'))
     }
 
     function ArticleEmbed({ embed, t }) {
       const src = embedSource(embed)
       const frameRef = useRef(null)
-      // The player document reports whether *it* can send a Referer. Only if it
-      // cannot (a shell that strips the header outright) do we stop pretending
-      // a player can work and show a card that opens the video instead.
-      const [refererMissing, setRefererMissing] = useState(false)
+      // The player document reports whether it can send a Referer. Recorded for
+      // diagnosis only — it never decides whether the player is shown.
+      const [referer, setReferer] = useState(null)
+      const [diag, setDiag] = useState('')
       useEffect(() => {
         if (!src || embed.provider !== 'youtube') return undefined
         const onMessage = (event) => {
@@ -460,15 +447,21 @@ window.__ModuleLoader__.load({
           if (!frame || event.source !== frame.contentWindow) return
           const data = event.data
           if (!data || data.source !== 'rss-miniflux-player') return
-          if (data.referer === false) setRefererMissing(true)
+          setReferer(data.referer === true)
+          setDiag(`referer=${data.referer === true};policy=${data.policy || ''};doc=${data.docReferrer || ''};origin=${data.origin || ''}`)
         }
         window.addEventListener('message', onMessage)
         return () => window.removeEventListener('message', onMessage)
       }, [src, embed.provider])
       if (!src) return null
-      if (refererMissing) return articleEmbedFallback(embed, t)
       const title = embed.provider === 'youtube' ? 'YouTube video' : 'Bilibili video'
-      return h('div', { className: 'mrss-embed', 'data-provider': embed.provider },
+      return h('div', {
+        className: 'mrss-embed',
+        'data-provider': embed.provider,
+        // Diagnostic only: what the player document said about its own Referer.
+        'data-player-referer': referer === null ? undefined : String(referer),
+        'data-player-diag': diag || undefined,
+      },
         h('iframe', {
           src,
           ref: frameRef,
@@ -483,7 +476,8 @@ window.__ModuleLoader__.load({
           allow: 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen',
           allowFullScreen: true,
           sandbox: 'allow-scripts allow-same-origin allow-presentation allow-popups allow-popups-to-escape-sandbox allow-forms',
-        }))
+        }),
+        articleEmbedNote(embed, t))
     }
 
     /**
@@ -1290,7 +1284,8 @@ window.__ModuleLoader__.load({
       'reader.pick': 'Pick an entry to start reading',
       'reader.loading': 'Opening…',
       'reader.original': 'Open in browser',
-      'embed.external': 'This window sends no page origin, so YouTube cannot play inline. Open it in your browser.',
+      'embed.external': 'If the player does not start, open the video in your browser.',
+      'embed.openExternal': 'Open in browser',
       'reader.close': 'Close article',
       'reader.readability': 'Readability',
       'reader.fullView': 'Full view',
@@ -1609,7 +1604,8 @@ window.__ModuleLoader__.load({
       "reader.pick": "选一篇文章开始阅读",
       "reader.loading": "正在打开…",
       "reader.original": "在浏览器中打开",
-      "embed.external": "这个窗口不发送页面来源，YouTube 拒绝内嵌播放。点开在浏览器看。",
+      "embed.external": "播放器没起来的话，点这里在浏览器中打开。",
+      "embed.openExternal": "在浏览器中打开",
       "reader.close": "关闭文章",
       "reader.readability": "正文提取",
       "reader.fullView": "无干扰阅读",
@@ -1979,11 +1975,8 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
 .mrss-embeds{display:flex;flex-direction:column;gap:14px;margin:18px 0 20px}
 .mrss-embed{position:relative;width:100%;aspect-ratio:16/9;overflow:hidden;border-radius:10px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}
 .mrss-embed iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:block}
-.mrss-embed--link{display:flex;align-items:center;justify-content:center;text-decoration:none;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2);overflow:hidden}
-.mrss-embed-thumb{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.5}
-.mrss-embed-play{position:relative;display:flex;align-items:center;justify-content:center;width:56px;height:56px;border-radius:50%;background:color-mix(in srgb,var(--dsw-alias-label-primary) 84%,transparent);color:var(--dsw-alias-bg-base);transition:transform .15s ease}
-.mrss-embed--link:hover .mrss-embed-play{transform:scale(1.06)}
-.mrss-embed-hint{position:absolute;left:12px;right:12px;bottom:10px;text-align:center;font-size:11.5px;line-height:1.45;color:var(--dsw-alias-label-secondary)}
+.mrss-embed-note{display:inline-block;margin-top:6px;font-size:11.5px;line-height:1.5;color:var(--dsw-alias-label-secondary);text-decoration:none}
+.mrss-embed-note:hover{color:var(--dsw-alias-brand-primary);text-decoration:underline;text-underline-offset:.2em}
 .mrss-tweet{display:flex;flex-direction:column;gap:10px;margin:16px 0 20px}
 /* Tweet videos keep their own ratio but never take over the column: the
    height cap keeps vertical clips readable and no upscaling keeps small clips

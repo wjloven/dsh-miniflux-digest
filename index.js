@@ -21,7 +21,7 @@ import {
 import { tweetFromSyndication } from './lib/tweet.js'
 import { createCache } from './lib/cache.js'
 
-const VERSION = '1.7.0'
+const VERSION = '1.7.1'
 const PREFIX = '/rss-miniflux/api'
 // A player document we serve ourselves. YouTube needs the embedding request to
 // carry a Referer; an app shell can strip it from its own pages, but the policy
@@ -1277,7 +1277,14 @@ export function apply(ctx, config = {}) {
       ok = true
     }
     try {
-      parent.postMessage({ source: 'rss-miniflux-player', referer: ok }, '*')
+      parent.postMessage({
+        source: 'rss-miniflux-player',
+        referer: ok,
+        // Enough context for one DOM paste to explain a failing shell.
+        policy: document.referrerPolicy || '',
+        docReferrer: document.referrer || '',
+        origin: location.origin,
+      }, '*')
     } catch (error) {
       // a detached frame simply has nobody to tell
     }
