@@ -22,9 +22,16 @@ Bring your Miniflux subscriptions directly into DeepSeek Harness. Miniflux Diges
 | --- | --- |
 | ![Footnote](preview/shots/reader-footnote.jpg) | ![Settings](preview/shots/settings-appearance.jpg) |
 
-| Empty Page + AI Entry |
-| --- |
-| ![Entry](preview/shots/assistant-empty.jpg) |
+| Empty Page + AI Entry | AI Digest Prompt Builder |
+| --- | --- |
+| ![Entry](preview/shots/assistant-empty.jpg) | ![Digest](preview/shots/assistant-digest.jpg) |
+
+## What's new in 1.9.0
+
+- The reader column now hosts a **real DSH conversation**, not a custom chat: native messages, composer, model picker, workspace picker and tools.
+- **Prompt chips** build a complete, editable prompt in the composer; the context stays a natural-language scope, never a raw `kind/filter/id`.
+- **Live Miniflux tools** (`miniflux_timeline`, with title resolution and original links) replace the old context file and prefetch.
+- Files and links in an answer **jump to the session's own interface** and open there; the digest session and chips are **resumed** when you return.
 
 ## Features
 
@@ -38,7 +45,11 @@ Bring your Miniflux subscriptions directly into DeepSeek Harness. Miniflux Diges
 - **Embedded media playback:** Plays video embeds from YouTube, Bilibili, and X (Twitter) natively within the reader.
 - **Keyboard-driven workflow:** Navigate articles and manage state effortlessly using standard reader keys (`j` / `k` to move, `m` to toggle read, `s` to star, `c` to copy clean Markdown, `v` to visit the original web page).
 - **Deep assistant integration:** Built-in tools allow your AI agent to query unread statistics, summarize whole categories, or parse article content using the same account and read states.
-- **An AI digest column with the real conversation inside:** the empty article page keeps its copy under a larger book mark; the "Continue with AI digest" entry carries the DeepSeek whale mark. It switches the column to AI digest: a title row (DeepSeek whale + "AI digest", new chat, close) above the **embedded DSH conversation** — created with `sessions`, wrapped in `SessionProvider`, and rendered through the session-scoped `conversation.content` slot, so the messages, native composer, model picker and tools are the shell's own. There is no context file and no prefetch, and the shell's blank-conversation hero headline ("Into the Unknown") is hidden while the native workspace picker stays available before the first message. Centred in the blank conversation area above the (untouched) composer, under a small book/sparkle illustration, sit a **greeting title** (What should we dig into?) with the current scope line (e.g. "All articles · 207 unread"), then two rows of **natural-language prompt chips** (what came in, 3 worth a slow read, group by thread, what changed this week, feeds worth following, plus starred/unread/all). Clicking them builds the whole prompt in the composer — a plain-language timeline context (name, kind, filter, count), the tool instruction, the selected asks and the answer language — which the reader can edit or send. Re-clicking a chip removes it; Clear sits on its own centred row and empties the composer. The agent then calls the new **miniflux_timeline** tool (it accepts kind/title/filter) to page the live timeline, and miniflux_read for an article. Each timeline line carries the entry's original Markdown link, and the prompt asks the agent to link the entries it recommends; the blank session keeps the native workspace picker. Clicking a file or link in the answer jumps to that digest session's own interface (`uiWorkspace.openSession`) and opens there: files via `openResource`, external links via `openTab('browser')` in the session's right sidebar, with no system-browser fallback. The digest session id and selected chips are remembered in localStorage and resumed when you return to the same scope (the native session keeps the history; no new session is created); the in-panel preview is only a file fallback.
+- **An AI digest column with the real conversation inside:** the empty article page keeps its copy under a 40px book mark; the "Continue with AI digest" entry carries the DeepSeek whale. It switches the column to AI digest — a DeepSeek whale + "AI digest" header, new chat and close — above the **embedded DSH conversation**. Sessions are created with `sessions` and wrapped in `SessionProvider`, so the messages, native composer, model picker, tools and workspace picker are the shell's own. The shell's blank-conversation hero headline ("Into the Unknown") is hidden; the workspace picker stays available before the first message.
+- **A prompt builder, not a context blob:** under a small book/sparkle illustration, a greeting ("What should we dig into?"), the current scope line ("All articles · 207 unread") and two rows of natural-language chips (what came in, 3 worth a slow read, group by thread, what changed this week, feeds worth following; starred/unread/all). Clicking composes the whole prompt in the composer — plain-language timeline context, tool instructions, the chosen asks and the answer language. Re-click to remove, Clear to empty. Edit or send it like any native message.
+- **Live tools, no context file:** the agent calls `miniflux_timeline` with kind/title/filter and pages with limit/offset; it resolves category/feed titles to ids and lists candidates when a title is ambiguous. Each title carries its original Markdown link, so recommended entries come back linked. No prefetch, no context file, no raw scope in the composer.
+- **Jump into the session:** clicking a file or link in the answer switches to the digest session's own interface (`uiWorkspace.openSession`) and opens there — files via `openResource`, external links via the session's right-sidebar browser (`openTab('browser')`). No system-browser fallback.
+- **Remembered conversations:** the digest session id and selected chips are saved per scope; returning to the same category/list (or refreshing) resumes the same native session with its history, without creating a new one. `X` clears it.
 
 ## Limitations
 - RSSHub suggestions are routes named by the model; the plugin does not verify each one. The public instance can rate-limit or be unreachable, and a failed subscribe is reported by Miniflux in the Add-feed dialog.
@@ -92,7 +103,9 @@ All feed names, article headlines, and sample articles in `preview/data.mjs` and
 - **点标题就能看原文**：正文标题本身是链接，点一下在浏览器打开原页面；工具栏保留同一个动作（`v` 键等效）。
 - **多媒体原生内嵌**：文章中引用的 YouTube、Bilibili 及 X（Twitter）视频直接在阅读区原地嵌入播放，无需跳转第三方网站。
 - **全键盘快捷键流**：遵循经典阅读器习惯，支持 `j` / `k` 上下移动、`m` 标记已读、`s` 收藏星标、`c` 一键复制整洁 Markdown、`v` 访问原文。
-- **智能体深度联动**：内置 6 项原子助手工具，与侧栏共用同一账号会话与已读状态，让模型随时为你生成未读速览、专题汇总或抓取全文。
+- **智能体深度联动**：内置 7 项原子助手工具，与侧栏共用同一账号会话与已读状态，让模型随时为你生成未读速览、专题汇总或抓取全文。
+- **AI digest 原生对话栏**：空文章页保留文案，入口带 DeepSeek 鲸鱼；点开后第三栏变成 AI digest，里面是真正的 DSH 会话（消息、原生输入框、模型、工具、workspace 选择器）。输入框上方是问候语 + 当前范围 + 两行自然语言 chips，点选组合成完整提示词，可改可发；不预取、不落盘、不塞 raw scope。
+- **会话跳转与原位恢复**：回答里的文件/链接会跳到该 digest 会话自己的界面再打开（外部链接走右侧栏浏览器，不跳系统浏览器）；会话 id 和 chips 按范围保存，回到同一分类/刷新会恢复原会话与历史，不新建。
 - **双语界面支持**：原生适配简体中文与英文，可随时在「设置 → 通用」中自由切换。
 
 ## 系统要求
@@ -131,13 +144,14 @@ dsh plugin --profile desktop add /path/to/dsh-miniflux-digest
 
 ## 助手工具
 
-插件内置 6 项工具，与前端面板共享同一 Miniflux 凭据和未读数据状态：
+插件内置 7 项工具，与前端面板共享同一 Miniflux 凭据和未读数据状态：
 
 | 工具 | 功能说明 |
 | --- | --- |
 | `miniflux_overview` | 查询当前连接状态，并按分类与订阅源汇总未读文章统计 |
 | `miniflux_digest` | 梳理未读条目，生成包含时间范围、来源分布、核心议题与深度阅读建议的速览 |
 | `miniflux_briefing` | 针对指定分类在对话中直接生成模型撰写的结构化简报 |
+| `miniflux_timeline` | 按当前时间线/分类/订阅源翻页取标题（带原文链接），是 AI digest 的实时上下文 |
 | `miniflux_read` | 提取指定文章完整正文，输出为格式规范的 Markdown |
 | `miniflux_search` | 按关键词全局检索已订阅条目 |
 | `miniflux_act` | 执行操作：标记已读/未读、添加/取消星标、触发单源或分类刷新 |
