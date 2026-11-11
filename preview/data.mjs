@@ -195,9 +195,10 @@ export function article(id, origin = '') {
     <p>${item.excerpt}</p>
     <p>这一段带一个<a href="https://example.com/notes">外部链接</a>，以及一个指向<a href="#h2">第二节</a>的内部跳转。</p>
     <figure>
-      <img src="${base}/mock-photo.svg" alt="山间的雾">
+      <img src="${base}/mock-photo.svg" alt="山间的雾" width="1440" height="900">
       <figcaption>山间的雾，示意图（preview 本地生成）。</figcaption>
     </figure>
+    <p><img src="${base}/mock-photo.svg" alt="雾中的山脊" width="1200" height="675"></p>
     <h2 id="h1">一、问题从哪里开始</h2>
     <p>把这件事拆开看，其实只有三步：先承认信息已经过载，再承认自己不可能全部读完<sup id="fnref1"><a href="#fn1">1</a></sup>，最后设计一个能在十分钟内完成的阅读路径。</p>
     <p>这三步听起来简单，但每一步都会遇到阻力。比如第二步——承认读不完——很多人会用「稍后读」来回避，结果稍后读变成了永久未读。</p>

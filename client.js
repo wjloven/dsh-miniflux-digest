@@ -1972,7 +1972,7 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
 .mrss-list-bar{display:flex;align-items:center;gap:3px;min-height:32px}
 .mrss-list-bar .mrss-btn[data-icon="true"]{width:28px;height:28px;padding:4px}
 .mrss-list-title{display:flex;align-items:center;gap:7px;flex:1;min-width:0;padding:0 2px}
-.mrss-scope{font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mrss-scope{font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;animation:mrss-fade .16s ease-out both}
 .mrss-list-count{flex:none;font-size:11.5px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary);white-space:nowrap}
 .mrss-tip{position:relative;display:inline-flex;flex:none}
 .mrss-tip::after{content:attr(data-tip);position:absolute;top:calc(100% + 7px);right:-2px;z-index:20;padding:4px 8px;border-radius:6px;background:var(--dsw-alias-toast-bg);color:var(--dsw-alias-toast-label);font-size:11px;line-height:1.4;white-space:nowrap;box-shadow:0 6px 18px rgba(0,0,0,.18);opacity:0;transform:translateY(-2px);pointer-events:none;transition:opacity .12s ease,transform .12s ease}
@@ -1980,6 +1980,12 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
 .mrss-tip:hover::after{opacity:1;transform:none}
 .mrss-list-bar .mrss-markall:disabled,
 .mrss-list-bar .mrss-markall:disabled:hover{opacity:.45;background:transparent;color:var(--dsw-alias-label-secondary)}
+/* One scope = one page: the newly painted list fades in as a sheet, so the old
+   rows never appear to morph into the new ones. The pulse that starts it comes
+   from loadEntries and is skipped for silent revalidation. */
+.mrss-list .mrss-scroll[data-anim="true"]{animation:mrss-list-in .16s ease-out both}
+@keyframes mrss-list-in{from{opacity:0}to{opacity:1}}
+.mrss-side .mrss-scroll[data-anim="true"] .mrss-feedline{animation:mrss-list-in .16s ease-out both}
 .mrss-item{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--dsw-alias-border-l1);background:transparent;color:inherit;font:inherit;padding:8px 12px 10px;cursor:pointer;position:relative}
 .mrss-item:hover{background:color-mix(in srgb,var(--dsw-alias-label-primary) 5%,transparent)}
 .mrss-item[data-active="true"]{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent)}
@@ -2008,6 +2014,8 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
 .mrss-root[data-mrss-theme="dark"] .mrss-article,
 [data-ds-dark-theme] .mrss-root:not([data-mrss-theme="light"]) .mrss-article{--mrss-reading-color:color-mix(in srgb,var(--dsw-alias-label-primary) 88%,var(--dsw-alias-bg-base))}
 @media (prefers-color-scheme:dark){.mrss-root:not([data-mrss-theme="light"]) .mrss-article{--mrss-reading-color:color-mix(in srgb,var(--dsw-alias-label-primary) 88%,var(--dsw-alias-bg-base))}}
+.mrss-article--enter{animation:mrss-article-in .18s cubic-bezier(.2,.7,.3,1) both}
+@keyframes mrss-article-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 @media (prefers-contrast:more){.mrss-article{--mrss-reading-color:var(--dsw-alias-label-primary);--mrss-muted:color-mix(in srgb,var(--dsw-alias-label-secondary) 55%,var(--dsw-alias-label-primary))}}
 .mrss-article-body :is(h1,h2,h3,h4){color:var(--dsw-alias-label-primary);line-height:1.3;text-wrap:balance;scroll-margin-top:16px}
 .mrss-article-body h1{font-size:1.5em;margin:.2em 0 .5em}
@@ -2023,6 +2031,20 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
    inline padding on both sides. Narrow images are never upscaled. */
 .mrss-article-body :is(img,video):not(figure *):not(.mrss-tweet-video):not(.mrss-embeds *){display:block;width:auto;height:auto;max-inline-size:calc(100% + 2*var(--mrss-pad-inline));position:relative;inset-inline-start:50%;translate:-50% 0;margin:1em 0;border-radius:8px}
 .mrss-article-body img{background:color-mix(in srgb,var(--dsw-alias-label-primary) 4%,transparent)}
+/* A body image stays invisible until its bitmap is complete (the box is already
+   reserved from the width/height attributes), then fades in once. Progressive
+   JPEGs paint themselves in from blurred to sharp, which is a worse read. */
+.mrss-article-body img[data-mrss-image="pending"]{opacity:0}
+.mrss-article-body img[data-mrss-image="ready"]{animation:mrss-image-in .24s ease-out both}
+.mrss-article-body img[data-mrss-image="error"],
+.mrss-article-body img[data-mrss-image="instant"]{opacity:1}
+@keyframes mrss-image-in{from{opacity:0}to{opacity:1}}
+/* A reserved box with nothing in it reads as a hole, so a soft block with a
+   slow sheen covers the image while its bitmap is on the way. It is absolutely
+   positioned over the reserved box and adds nothing to the flow. */
+.mrss-imgslot{position:absolute;border-radius:8px;overflow:hidden;pointer-events:none;background:color-mix(in srgb,var(--dsw-alias-label-primary) 7%,transparent)}
+.mrss-imgslot::after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 22%,color-mix(in srgb,var(--dsw-alias-label-primary) 12%,transparent) 50%,transparent 78%);transform:translateX(-100%);animation:mrss-img-sheen 1.5s ease-in-out infinite}
+@keyframes mrss-img-sheen{to{transform:translateX(100%)}}
 /* Feed-native videos (X/Instagram embeds often arrive as <video>) get the same
    ceiling as tweet videos: keep the ratio, never fill the reading pane. */
 .mrss-article-body video{max-height:min(420px,60vh);background:#000}
@@ -2220,8 +2242,10 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
 .mrss-skel-avatar{width:26px;height:26px;border-radius:50%;flex:none;background:color-mix(in srgb,var(--dsw-alias-label-primary) 10%,transparent);animation:mrss-skel-pulse 1.5s ease-in-out infinite}
 @keyframes mrss-skel-pulse{0%,100%{opacity:.55}50%{opacity:1}}
 @media (prefers-reduced-motion:reduce){.mrss-skel-row,.mrss-skel-avatar{animation:none;opacity:.7}}
-.mrss-void{display:flex;flex-direction:column;align-items:center;gap:10px}
+.mrss-reader > .mrss-center{animation:mrss-fade .16s ease-out both}
+.mrss-void{display:flex;flex-direction:column;align-items:center;gap:10px;animation:mrss-void-in .22s ease-out both}
 .mrss-void-icon{opacity:.45}
+@keyframes mrss-void-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .mrss-manage{position:absolute;inset:0;z-index:12;display:flex;background:color-mix(in srgb,#000 22%,transparent)}
 .mrss-manage-card{margin:auto;width:min(880px,94%);max-height:88%;display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.28);overflow:hidden}
 .mrss-manage-head{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--dsw-alias-border-l1)}
@@ -2371,6 +2395,19 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
 .mrss-loadmore:disabled{cursor:default;opacity:.6}
 @media (max-width:1100px){.mrss-cols{grid-template-columns:1fr}.mrss-stats{grid-template-columns:repeat(2,1fr)}}
 @media (max-width:900px){.mrss-side{width:176px}.mrss-list{width:280px}}
+/* Last so it outranks every animation declared above. */
+@media (prefers-reduced-motion:reduce){
+  .mrss-scope,
+  .mrss-list .mrss-scroll[data-anim="true"],
+  .mrss-side .mrss-scroll[data-anim="true"] .mrss-feedline,
+  .mrss-article--enter,
+  .mrss-reader > .mrss-center,
+  .mrss-void,
+  .mrss-article-body img[data-mrss-image="ready"]{animation:none}
+}
+@media (prefers-reduced-motion:reduce){
+  .mrss-imgslot::after{animation:none;opacity:.55}
+}
 `
 
     // ---------------------------------------------------------------------
@@ -2718,6 +2755,78 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         ))
     }
 
+
+    /**
+     * Reserve the box a not-yet-loaded body image will occupy.
+     *
+     * The sanitizer keeps `width`/`height`, but the reading CSS sets
+     * `width:auto;height:auto`, so until the bitmap's intrinsic size is known
+     * the image is 0x0 and the text below slides down when it lands. While the
+     * image is hidden (waiting for its full decode) that would be a blank strip
+     * that later explodes in height, so size the box from the attributes and
+     * the current column width: narrow images keep their width, wide ones are
+     * capped the way the reading CSS caps them — body images and figures may
+     * both bleed into the gutters by one inline padding on each side, so the
+     * widest a body image can get is the text column plus 2 * padding.
+     *
+     * Returns the reserved box and a release function that hands layout back to
+     * the stylesheet, or null when the attributes cannot describe a box.
+     */
+    function reserveImageBox(img, articleEl) {
+      const width = Number(img.getAttribute('width'))
+      const height = Number(img.getAttribute('height'))
+      if (!(width > 0) || !(height > 0)) return null
+      const pad = parseFloat(getComputedStyle(articleEl).getPropertyValue('--mrss-pad-inline')) || 32
+      const content = articleEl.clientWidth - pad * 2
+      if (!(content > 0)) return null
+      const box = Math.max(1, Math.round(Math.min(width, content + pad * 2)))
+      img.style.width = `${box}px`
+      img.style.aspectRatio = `${width} / ${height}`
+      return {
+        width: box,
+        height: Math.max(1, Math.round((box * height) / width)),
+        release() {
+          img.style.width = ''
+          img.style.aspectRatio = ''
+        },
+      }
+    }
+
+    /**
+     * A tinted, shimmering block laid exactly over a reserved image box.
+     *
+     * The image itself cannot show a placeholder while it waits (it is hidden
+     * so the streaming bitmap never paints), and an empty reserved box reads as
+     * a hole. The slot is absolutely positioned over the reserved box, so it
+     * adds nothing to the flow: the image's own inline width/ratio keep the
+     * space. Body images are centred with the same 50% / -50% trick as the CSS;
+     * figure images sit at their own offset inside the figure.
+     */
+    function addImageSlot(img, box) {
+      const parent = img.parentElement
+      if (!parent || !box) return () => {}
+      const inFigure = Boolean(img.closest('figure'))
+      const originalPosition = parent.style.position
+      if (getComputedStyle(parent).position === 'static') parent.style.position = 'relative'
+      const slot = document.createElement('span')
+      slot.className = 'mrss-imgslot'
+      slot.setAttribute('aria-hidden', 'true')
+      slot.style.width = `${box.width}px`
+      slot.style.height = `${box.height}px`
+      slot.style.top = `${img.offsetTop}px`
+      if (inFigure) {
+        slot.style.left = `${img.offsetLeft}px`
+      } else {
+        slot.style.left = '50%'
+        slot.style.transform = 'translateX(-50%)'
+      }
+      parent.insertBefore(slot, img)
+      return () => {
+        slot.remove()
+        if (parent.style.position !== originalPosition) parent.style.position = originalPosition
+      }
+    }
+
     // ---------------------------------------------------------------------
     // Panel
     // ---------------------------------------------------------------------
@@ -2745,6 +2854,12 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
       const [showAddFeed, setShowAddFeed] = useState(false)
       const [feedStats, setFeedStats] = useState(null)
       const [starredEpoch, setStarredEpoch] = useState(0)
+      // False until the panel's first commit: the very first paint must not
+      // animate, or a warm start would fade content the snapshot already had.
+      const [entered, setEntered] = useState(false)
+      // Bumped when another page is painted into the list; drives its fade-in.
+      const [listPulse, setListPulse] = useState(0)
+      const listPulseKey = useRef('')
       const [addFeedCategory, setAddFeedCategory] = useState('')
       const [prefs, setPrefs] = useState(loadPrefs)
       // The panel owns its own translations so the language switch is instant.
@@ -2773,6 +2888,8 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
       const loadingMoreRef = useRef(false)
       const articleSeq = useRef(0)
       const scrollMarkedRef = useRef(null)
+      // A restored article paints instantly; only a switch made after mount animates.
+      const skipArticleEnter = useRef(articleState === 'ready' && Boolean(article))
       const firstBootRef = useRef(false)
       const addMenuRef = useRef(null)
       const opmlInputRef = useRef(null)
@@ -2901,6 +3018,88 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
         })
       }, [article && article.html, articleState, articleBody, t])
 
+      /**
+       * Body images: hold them back until the bitmap is complete.
+       *
+       * A streaming JPEG (progressive or merely large) is painted by the
+       * browser in passes, so the reader watches a blurred image sharpen. That
+       * is worse than waiting: the box is reserved from the width/height
+       * attributes, the image stays invisible, and once `load` + `decode` are
+       * done it fades in once. The element is decorated rather than wrapped so
+       * the careful figure / full-bleed CSS keeps working unchanged.
+       */
+      React.useLayoutEffect(() => {
+        const root = articleBody()
+        if (!root || articleState !== 'ready' || !article) return undefined
+        const listeners = []
+        for (const img of root.querySelectorAll('img')) {
+          // The injected HTML is only decorated once; a re-render keeps the nodes.
+          if (img.dataset.mrssImage) continue
+          // Already decoded (a reload, or the panel coming back): leave it be.
+          // Hiding it now would blank a pixel the user can already see.
+          if (img.complete && img.naturalWidth > 0) {
+            img.dataset.mrssImage = 'instant'
+            continue
+          }
+          const box = reserveImageBox(img, root)
+          const removeSlot = addImageSlot(img, box)
+          const done = (state) => {
+            if (box) box.release()
+            removeSlot()
+            img.dataset.mrssImage = state
+            img.removeEventListener('load', reveal)
+            img.removeEventListener('error', fail)
+          }
+          function reveal() {
+            // `decode` resolves after the final frame is ready, so the first
+            // visible frame is the sharp one (and the work is off the main thread).
+            if (typeof img.decode === 'function') {
+              img.decode().catch(() => {}).then(() => done('ready'))
+            } else {
+              done('ready')
+            }
+          }
+          function fail() {
+            // A broken image keeps its alt text / broken glyph instead of
+            // leaving a reserved hole.
+            done('error')
+          }
+          // Hide before the first paint of the article: otherwise the box would
+          // collapse for a frame and then push the text down once it is reserved.
+          img.dataset.mrssImage = 'pending'
+          img.addEventListener('load', reveal)
+          img.addEventListener('error', fail)
+          listeners.push(() => {
+            img.removeEventListener('load', reveal)
+            img.removeEventListener('error', fail)
+          })
+          if (img.complete) {
+            if (img.naturalWidth > 0) reveal()
+            else fail()
+          }
+        }
+        return () => { for (const off of listeners) off() }
+      }, [article && article.html, articleState, articleBody])
+
+      /**
+       * Settle a switched-in article.
+       *
+       * The article element is keyed by entry id, so opening another entry
+       * creates a new node — but so does the first paint of a panel mount that
+       * restored an article, and that one must not fade (the snapshot is meant
+       * to look like it was never gone). The class is added before paint, so
+       * the reveal starts on the first frame instead of flashing the full text.
+       */
+      React.useLayoutEffect(() => {
+        const node = articleRef.current?.querySelector('.mrss-article')
+        if (!node) return
+        if (skipArticleEnter.current) {
+          skipArticleEnter.current = false
+          return
+        }
+        node.classList.add('mrss-article--enter')
+      }, [article && article.item ? article.item.id : 0, articleState])
+
       // Full view only makes sense while an article is open: closing it (or
       // switching scope) restores the feeds sidebar and the article list.
       useEffect(() => {
@@ -2917,6 +3116,9 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
       }, [entries])
 
       useEffect(() => { bootRef.current = boot }, [boot])
+
+      // One frame after the first commit, later mounts (a scope switch) may animate.
+      useEffect(() => { setEntered(true) }, [])
 
       // Mirror the view state outside the component so a panel switch keeps
       // the reading position and filters.
@@ -3041,6 +3243,19 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
        * then refreshes, which is what makes going back to a category feel like a
        * switch instead of a fetch.
        */
+      /**
+       * Fade a newly painted list page in.
+       *
+       * `key` dedupes: the remembered paint and the revalidation that follows
+       * describe the same page, so only the first one animates. Scope and
+       * filter swaps both end here; background refreshes stay silent.
+       */
+      const pulseList = useCallback((key) => {
+        if (!key || listPulseKey.current === key) return
+        listPulseKey.current = key
+        setListPulse((value) => value + 1)
+      }, [])
+
       const loadEntries = useCallback(async ({ append = false, silent = false } = {}) => {
         if (append && loadingMoreRef.current) return
         const key = entriesKeyFor({ filter, scope, debounced, order: prefs.sortField })
@@ -3054,6 +3269,7 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
           // not mean the catalog is fresh.
           setError((current) => (current?.code === 'bootstrap' ? current : null))
           setListInfo((current) => ({ ...current, loading: false, loadingMore: false, total: remembered.total }))
+          pulseList(key)
         }
         const previous = append ? entriesRef.current : []
         const seq = append ? listSeq.current : ++listSeq.current
@@ -3095,7 +3311,12 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
           rememberPage(key, { entries: incoming, total })
           // A remembered page is already on screen; only replace it when the
           // refresh actually differs, so the reader keeps its scroll position.
-          if ((!silent && !remembered) || !sameList(entriesRef.current, incoming)) setEntries(incoming)
+          if ((!silent && !remembered) || !sameList(entriesRef.current, incoming)) {
+            setEntries(incoming)
+            // A silent refresh updates rows in place; only a page the user
+            // asked for is allowed to fade in.
+            if (!silent) pulseList(key)
+          }
           // A degraded catalog keeps its own banner: it is not fixed by the
           // list loading fine, only by the next good bootstrap.
           if (!silent) setError((current) => (current?.code === 'bootstrap' ? current : null))
@@ -3104,7 +3325,7 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
           persistSnapshot({ entries: incoming, entriesKey: key, total, filter, scope })
         }
         setListInfo((current) => ({ ...current, loading: false, loadingMore: false, total }))
-      }, [filter, scope, debounced, prefs.sortField])
+      }, [filter, scope, debounced, prefs.sortField, pulseList])
 
       const loadArticle = useCallback(async (id, fetchOriginal = false) => {
         if (!id) return null
@@ -4457,7 +4678,12 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
             onClick: () => updatePrefs({ feedSort: prefs.feedSort === 'unread' ? 'alpha' : 'unread' }),
           }, h(Icon, { name: prefs.feedSort === 'unread' ? 'arrow-down-1-0' : 'arrow-down-a-z', size: 15 })),
         ),
-        h('div', { className: 'mrss-scroll', ref: feedListRef },
+        h('div', {
+          className: 'mrss-scroll',
+          ref: feedListRef,
+          // Category swaps replace the feed rows; fade the new set in.
+          'data-anim': entered ? 'true' : undefined,
+        },
           // No bootstrap yet means the first fetch is still running: placeholders,
           // not the "no feeds yet" invitation.
           !boot
@@ -4537,7 +4763,7 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
             onClick: () => setSidebarCollapsed((value) => !value),
           }, h(Icon, { name: sidebarCollapsed ? 'panel-left-open' : 'panel-left-close' })),
           h('div', { className: 'mrss-list-title' },
-            h('span', { className: 'mrss-scope', title: scopeTitle }, scopeTitle),
+            h('span', { key: scopeTitle, className: 'mrss-scope', title: scopeTitle }, scopeTitle),
             listCount ? h('span', { className: 'mrss-list-count' }, listCount) : null,
           ),
           // Tooltip on the wrapper: a disabled button would swallow (or never
@@ -4581,7 +4807,11 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
       },
         listHead,
         h('div', {
+          // Remounting on a pulse is what restarts the fade-in; the rows are
+          // new anyway, and a new page starts at the top.
+          key: `list-${listPulse}`,
           className: 'mrss-scroll',
+          'data-anim': listPulse > 0 ? 'true' : undefined,
           ref: listRef,
           onScroll: (event) => {
             const node = event.currentTarget
@@ -4787,7 +5017,7 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
               )
               : null,
             h('div', { className: 'mrss-article-scroll', ref: articleRef, onScroll: onArticleScroll },
-              h('article', { className: 'mrss-article', onClick: onArticleClick },
+              h('article', { key: `article-${article.item.id}`, className: 'mrss-article', onClick: onArticleClick },
                 h('header', { className: 'mrss-article-head' },
                   articleTitle.kicker
                     ? h('div', { className: 'mrss-article-kicker' }, articleTitle.kicker)
@@ -4867,10 +5097,10 @@ html[data-platform=darwin] [data-sidebar-collapsed] .mrss-root{padding-top:var(-
             ),
           )
           : articleState === 'loading'
-            ? h('div', { className: 'mrss-center' }, t('reader.loading'))
+            ? h('div', { key: 'loading', className: 'mrss-center' }, t('reader.loading'))
             : articleState === 'error'
-              ? h('div', { className: 'mrss-center' }, error?.message || t('error.title'))
-              : h('div', { className: 'mrss-center' },
+              ? h('div', { key: 'error', className: 'mrss-center' }, error?.message || t('error.title'))
+              : h('div', { key: 'idle', className: 'mrss-center' },
                 h('div', { className: 'mrss-void' },
                   h(Icon, { name: 'inbox', size: 30, className: 'mrss-icon mrss-void-icon' }),
                   h('span', null, t('reader.pick')),

@@ -21,6 +21,9 @@ What was tested, on which setup, and what is still unverified.
 | 状态保持 | 面板状态改为组件外缓存：筛选、搜索、选中条目、正/列表滚动位置都跨挂载保留；进入时不重取，侧栏刷新按钮 / `r` 才更新（无浏览器控制，未做交互级验证） |
 | 推理强度 | 通过：`GET /efforts` 对两个 provider 返回各自声明的档位；同一请求 off 7.6s / low 21.0s，元信息正确记录所选档位 |
 | 侧栏头部 | 通过（headless Chromium）：`+` 菜单的 New feed / New category 各开独立弹框，Import OPML 直接触发隐藏的 file input（不打开设置）；齿轮落在 Preferences；200px 侧栏下标题与时间不截断 |
+| 切换动效 | 通过（headless Chromium，`tests/motion.mjs`）：打开文章时 `.mrss-article` 带 `mrss-article--enter` 且 180 ms 后不透明；切分类后列表页 `mrss-list-in`、范围名 `mrss-fade`、空态 `mrss-void-in`、侧栏订阅行 `mrss-list-in`，400 ms 后都不透明；刷新页面恢复文章时**不**重播进场动画（无 class、`animation-name: none`）；模拟 `prefers-reduced-motion: reduce` 后全部为 `none` 且内容可见 |
+| 正文图片 | 通过（headless Chromium，`tests/reader-images.mjs`，CDP Fetch 暂停图片请求制造真实等待）：等待中 `data-mrss-image="pending"`、`opacity: 0`、按 1440×900 预留 655×409（比例 1.6），占位块与图片盒四边完全重合（653/676/655×409）；放行后 `ready`、不透明、占位块移除、内联宽度/比例清空、自然宽 1440，尺寸与预留一致 |
+| 图片占位视觉 | 通过（截图 `image-pending.png` / `image-ready.png`）：暂停请求时预留位置是一块浅灰圆角块 + 慢扫光，不是空白；放行后同一位置出现图片，文章其余内容没有位移 |
 | 切换范围清空阅读区 | 通过（headless Chromium，`tests/scope-switch.mjs`）：在 All 打开第 0 行后点订阅源 → 阅读区回到空态、无高亮行、快照记 `selectedId: null`；在订阅源内打开文章后切分类同样清空；重复点当前分类保留文章与选中行；点 All 也清空；点开文章后在请求返回前切走，正文不再出现（`Opening…` 期间切走，1.8 s 后仍是空态） |
 | 过滤联动 | 通过（headless Chromium）：Unread 19 个源、数字为未读、头部 `207 unread`；Starred 13 个源、数字为星标数、头部 `36 starred`；All 20 个源、无行尾数字、头部 `20 feeds`；在 Starred 下切到 Articles 仍保持 Starred（5 个源、头部 `8 starred`），点订阅源也不重置 |
 | feed-stats | 预览 mock 上验证客户端联动；Host 按星标条目聚合每个源，`live-api.mjs` 已加断言，需重启 Host 后复跑；真实账号的星标量/耗时尚未实测 |
